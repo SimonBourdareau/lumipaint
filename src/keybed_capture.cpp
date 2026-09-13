@@ -1129,6 +1129,47 @@ bool KeybedCapture::detect()
                         candidate.push_back (k);
                     }
 
+                    /*
+                        The reference C is the lowest one, which is what the panel has
+                        always claimed it is.
+
+                        firstC comes out of the grouping test, and that only runs across
+                        the span where the dividers are legible. The extension loop above
+                        then prepends up to sixteen white keys to the left of it without
+                        moving the reference, so a keybed whose bottom octaves are
+                        painted over can end up with one or two whole Cs sitting below
+                        semitone zero. Those keys carried negative semitones: the preview
+                        strip starts at zero and never drew them, and Find anchor
+                        reported the MIDI note of a C an octave or two above the lowest
+                        key on screen. The colours still landed on the right notes,
+                        because the anchor and the semitones were wrong together - but
+                        every number shown was off by an octave or two, which is
+                        indistinguishable from the probe being broken.
+
+                        Rebased once, here, so every key is at or above semitone zero and
+                        the anchor is the note of the leftmost C.
+                    */
+                    {
+                        int lowest = 0;
+                        bool first = true;
+
+                        for (const Key &k : candidate)
+                            if (first || k.semitone < lowest)
+                            {
+                                lowest = k.semitone;
+                                first = false;
+                            }
+
+                        int base = (lowest / 12) * 12;
+
+                        if (lowest < 0 && lowest % 12 != 0)
+                            base -= 12;
+
+                        if (base != 0)
+                            for (Key &k : candidate)
+                                k.semitone -= base;
+                    }
+
                     bestScore = score;
                     keys = candidate;
                     measuredWhiteWidth = medianGap;

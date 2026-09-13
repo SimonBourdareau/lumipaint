@@ -144,29 +144,6 @@ const uint32_t kStateMagic   = 0x4c554d31;
 */
 const char * const kPluginVersion = "1.0.0";
 
-/*
-    Which octave number middle C gets.
-
-    There are three conventions in circulation and no agreement: middle C, note 60, is
-    called C3, C4 or C5 depending on who made your software. MIDI never settled it. So
-    this is a setting rather than a constant, and it only ever changes a label - the note
-    numbers sent and received are untouched.
-
-    Default 3, which is what Bitwig and most trackers show.
-*/
-/*
-    What to call the octaves, which is a naming convention and nothing more.
-
-    Note 60 is note 60 whatever anyone calls it, but hosts disagree about the label:
-    Cubase and Bitwig say C3, Logic and Live say C4, some older gear says C2. A keyboard
-    that disagrees with the DAW above it about the name of the key you just pressed is
-    a small thing that wastes a surprising amount of time.
-
-    Four now, not three - C2 was missing, and a plugin that cannot be made to agree with
-    the host is worse than one with no labels at all.
-*/
-const int kOctaveNameOffsets[4] = { -3, -2, -1, 0 };   /* C2, C3, C4, C5 for note 60 */
-
 const uint32_t kStateVersion = 25;
 
 enum ParamId

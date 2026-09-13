@@ -679,10 +679,18 @@ private:
             draw->AddRect (tl, br, IM_COL32 (180, 200, 255, 200), 2.0f, 0, 1.5f);
     }
 
-    /* The octave number shown beside a note name. See kOctaveNameOffsets. */
+    /*
+        The octave number shown beside a note name.
+
+        One convention, not a setting: note 0 is C-2, so note 60 is C3 and note 127 is
+        G8. That is the range a DAW shows, and a keyboard that disagrees with the track
+        above it about the name of the key just pressed is worse than one with no
+        labels. There used to be a chooser here offering four conventions; it could only
+        ever be set wrong, and being wrong looked exactly like the anchor being wrong.
+    */
     int octaveOf (int note) const
     {
-        return note / 12 + kOctaveNameOffsets[middleCStyle];
+        return note / 12 - 2;
     }
 
     int whiteIndexForNote (int note) const
@@ -1021,17 +1029,8 @@ private:
         drawOffsetControl();
         drawFoldControl();
 
-        /* Set this to whatever your DAW calls middle C, so the two agree. It changes
-           labels here and nothing else - no MIDI, no colours, no octave shift. */
-        ImGui::SetNextItemWidth (240.0f);
-
-        if (ImGui::Combo ("Middle C is", &middleCStyle, "C2\0C3\0C4\0C5\0"))
-            markDirty();
-
-        ImGui::SameLine();
-        ImGui::TextDisabled ("note 60, named to match your DAW");
-
-        ImGui::TextDisabled ("keys show the note they actually play");
+        ImGui::TextDisabled ("keys show the note they actually play - note 0 is C-2, "
+                             "note 60 is C3, as in the DAW");
     }
 
     void drawParamSlider (const char *label, uint32_t paramId, double current)
@@ -1576,6 +1575,13 @@ private:
             case 1:
                 probeBefore.clear();
                 {
+                    /* Read the window now rather than trusting whatever the last
+                       refresh left behind. With Live off nothing has sampled since the
+                       panel was opened, so the "before" could be minutes old and any
+                       key the plugin repainted in between reads as the one that
+                       changed. */
+                    owner->capture->sample();
+
                     int semi = 0;
                     uint32_t rgb = 0;
 
@@ -1939,8 +1945,6 @@ private:
     int paintScope;
     int scaleRoot;
 
-    /* Which octave naming to show. Labels only - nothing about the MIDI changes. */
-    int middleCStyle = 1;   /* index 1 = offset -2 = note 60 reads C3, as before */
     int scaleIndex;
     float scaleRootColour[3];
     float scaleInColour[3];
