@@ -41,6 +41,29 @@ would need changing and how to find out in one flash.
 
 ## Setting it up
 
+The quickest way in is the [latest release](../../releases/latest), which has both plugin
+formats built for Windows and the device program, so nothing needs compiling.
+
+Unzip it and put the pieces where your host looks for them:
+
+| File | Where it goes |
+| --- | --- |
+| `LumiPaint.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
+| `LumiPaint.vst3` | `C:\Program Files\Common Files\VST3\` |
+| `lumi_paint.littlefoot` | not installed — dragged onto the keyboard in ROLI Dashboard, see below |
+
+`LumiPaint.vst3` is a **folder**, not a file. Copy the whole thing, and if your host does
+not list it, check that `LumiPaint.vst3\Contents\x86_64-win\LumiPaint.vst3` is inside —
+a copy that missed the nested file leaves a bundle that looks right and cannot load.
+
+Install whichever format your host uses; there is no advantage to having both, and some
+hosts will show the plugin twice if you do.
+
+Rescan plugins in your host afterwards. Then carry on from step 0 below, which you need
+either way — the keyboard has to be flashed before any of this does anything.
+
+### Building it yourself
+
 **0. Check the firmware.** The keyboard needs **1.3.0 or later** for Dashboard to accept
 a Littlefoot program at all. Dashboard shows the current version and updates it. On
 older firmware the drop is refused or silently does nothing, and no amount of fiddling
