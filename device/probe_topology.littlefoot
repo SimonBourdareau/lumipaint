@@ -1,0 +1,70 @@
+/*
+<metadata description="Probe: cluster topology" target="Lumi">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+    What each block believes about its place in the chain.
+
+    The blocks are meant to spread out along the keyboard by reading their own position
+    with getClusterXpos(). If they are not spreading, either that call is not returning
+    what the code assumes or the blocks are not being seen as a cluster at all - and
+    those need telling apart before anything is changed.
+
+    Load this on the chain and read each block:
+
+      key 0-4    getClusterWidth()          how many blocks this one thinks are joined
+                                            one key lit = 1, two = 2, and so on
+      key 6-10   getClusterXpos()           where this one thinks it sits
+                                            key 6 lit = position 0, key 7 = position 1
+      key 12     white if this block is the master
+      key 14     white if a master is in the cluster at all
+
+    The two blocks should show the SAME width and DIFFERENT positions. If both show
+    width 1, they are not a cluster and nothing downstream can work. If both show the
+    same position, getClusterXpos() is not doing what the main program relies on.
+*/
+
+void initialise()
+{
+    setUseDefaultKeyHandler(true, false);
+    setLocalConfigActiveState(36, true, true);
+}
+
+void repaint()
+{
+    for (int k = 0; k < 24; k = k + 1) { fillPixel(0xFF0A0A0A, k, 0); }
+
+    int width = getClusterWidth();
+    int xpos = getClusterXpos();
+
+    for (int i = 0; i < 5; i = i + 1)
+    {
+        if (i < width) { fillPixel(0xFF20C040, i, 0); }
+    }
+
+    for (int i = 0; i < 5; i = i + 1)
+    {
+        if (i == xpos) { fillPixel(0xFF2060E0, 6 + i, 0); }
+    }
+
+    if (isMasterBlock()) { fillPixel(0xFFFFFFFF, 12, 0); }
+    if (isMasterInCurrentCluster()) { fillPixel(0xFFC0C0C0, 14, 0); }
+}

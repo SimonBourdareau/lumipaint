@@ -1,0 +1,26 @@
+# Dependencies, cloned by the build rather than vendored. Committing them would put
+# three upstream projects in your history and make every one of their commits look
+# like yours.
+clap-src/
+imgui/
+imgui2/
+rtmidi/
+
+# Build output
+obj/
+build/
+build-vst3/
+build-vst3.log
+*.clap
+*.vst3
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+
+# Tool output
+capture_*.ppm
+capture_*.bmp
+*.pyc
+__pycache__/

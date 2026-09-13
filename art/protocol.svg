@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 545" width="900" height="545"
+     font-family="Segoe UI, Calibri, DejaVu Sans, sans-serif">
+
+  <!--
+    The wire protocol, both directions.
+
+    Drawn rather than described because the shape is the point: three parallel colour
+    components going one way, a single self-describing report coming back, and the
+    reason each direction uses what it does.
+  -->
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a8f9a"/>
+    </marker>
+    <marker id="arrowBack" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5aa0ff"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="545" fill="#0e0e12"/>
+
+  <!-- the two actors -->
+  <rect x="40" y="28" width="180" height="52" rx="10" fill="#1c1c24" stroke="#3a3a48"/>
+  <text x="130" y="60" text-anchor="middle" fill="#e8e8ec" font-size="19">plugin</text>
+
+  <rect x="680" y="28" width="180" height="52" rx="10" fill="#1c1c24" stroke="#3a3a48"/>
+  <text x="770" y="60" text-anchor="middle" fill="#e8e8ec" font-size="19">keyboard</text>
+
+  <line x1="130" y1="80" x2="130" y2="520" stroke="#2e2e3a" stroke-width="2"/>
+  <line x1="770" y1="80" x2="770" y2="520" stroke="#2e2e3a" stroke-width="2"/>
+
+  <!-- colour, three components -->
+  <text x="40" y="122" fill="#8a8f9a" font-size="13">a note's colour changed</text>
+
+  <line x1="130" y1="140" x2="760" y2="140" stroke="#ff5b52" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="445" y="134" text-anchor="middle" fill="#ff5b52" font-size="13">poly aftertouch · ch 14 · note = key · value = red</text>
+
+  <line x1="130" y1="172" x2="760" y2="172" stroke="#3ecf6a" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="445" y="166" text-anchor="middle" fill="#3ecf6a" font-size="13">poly aftertouch · ch 15 · note = key · value = green</text>
+
+  <line x1="130" y1="204" x2="760" y2="204" stroke="#4aa8ff" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="445" y="198" text-anchor="middle" fill="#4aa8ff" font-size="13">poly aftertouch · ch 16 · note = key · value = blue</text>
+
+  <text x="445" y="228" text-anchor="middle" fill="#6e727c" font-size="12">
+    only the components that changed, and only when the change is visible
+  </text>
+
+  <!-- lit state -->
+  <text x="40" y="272" fill="#8a8f9a" font-size="13">a note lit or unlit</text>
+  <line x1="130" y1="290" x2="760" y2="290" stroke="#8a8f9a" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="445" y="284" text-anchor="middle" fill="#b6bac4" font-size="13">note on / note off · ch 16</text>
+
+  <!-- everything else -->
+  <text x="40" y="334" fill="#8a8f9a" font-size="13">brightness, gradients,</text>
+  <text x="40" y="350" fill="#8a8f9a" font-size="13">octave, settings</text>
+  <line x1="130" y1="342" x2="760" y2="342" stroke="#8a8f9a" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="445" y="336" text-anchor="middle" fill="#b6bac4" font-size="13">control change · ch 16</text>
+
+  <!-- the return path -->
+  <line x1="770" y1="404" x2="140" y2="404" stroke="#5aa0ff" stroke-width="2" marker-end="url(#arrowBack)"/>
+  <text x="455" y="398" text-anchor="middle" fill="#5aa0ff" font-size="13">poly aftertouch · ch 16 · note = slot · value = value</text>
+
+  <text x="40" y="382" fill="#8a8f9a" font-size="13">a setting changed,</text>
+  <text x="40" y="398" fill="#8a8f9a" font-size="13">a block moved</text>
+
+  <!-- slot map -->
+  <rect x="250" y="422" width="400" height="90" rx="8" fill="#15151c" stroke="#2e2e3a"/>
+  <text x="266" y="443" fill="#6e727c" font-size="12">slot 0–63</text>
+  <text x="360" y="443" fill="#b6bac4" font-size="12">a config item, the slot being its id</text>
+  <text x="266" y="461" fill="#6e727c" font-size="12">slot 100</text>
+  <text x="360" y="461" fill="#b6bac4" font-size="12">how many blocks are in the chain</text>
+  <text x="266" y="479" fill="#6e727c" font-size="12">slot 101</text>
+  <text x="360" y="479" fill="#b6bac4" font-size="12">lowest note the leftmost block shows</text>
+  <text x="266" y="497" fill="#6e727c" font-size="12">slot 110+n</text>
+  <text x="360" y="497" fill="#b6bac4" font-size="12">block n's lowest note</text>
+
+  <text x="450" y="535" text-anchor="middle" fill="#4a4e58" font-size="12">
+    the keyboard sends no control changes at all
+  </text>
+</svg>

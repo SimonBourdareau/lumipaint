@@ -1,0 +1,54 @@
+/*
+<metadata description="Probe: LED index ruler" target="LUMI Keys" tags="MIDI;Light;" insertModes="false">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// Lights five known LED indices in distinct colours so the index-to-key mapping can be
+// read off the hardware instead of assumed:
+//
+//   index 0   WHITE
+//   index 12  RED
+//   index 24  GREEN
+//   index 36  BLUE
+//   index 48  YELLOW
+//
+// If indices are one per semitone, these land exactly one octave apart: five C's, or
+// five of whatever note index 0 sits on. Report which physical key each colour lands
+// on, for EACH device in the chain.
+//
+// Anything unlit at the top tells us the real key count. Everything else stays dark so
+// there is nothing to miscount.
+
+int numKeys;
+
+void initialise() {
+    numKeys = 61;
+}
+
+void repaint() {
+    for (int i = 0; i < numKeys; i = i + 1) {
+        if (i == 0) { fillPixel(0xFFFFFFFF, i, 0); }
+        else if (i == 12) { fillPixel(0xFFFF0000, i, 0); }
+        else if (i == 24) { fillPixel(0xFF00FF00, i, 0); }
+        else if (i == 36) { fillPixel(0xFF0000FF, i, 0); }
+        else if (i == 48) { fillPixel(0xFFFFFF00, i, 0); }
+        else { fillPixel(0xFF000000, i, 0); }
+    }
+}

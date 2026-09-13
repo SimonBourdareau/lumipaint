@@ -1,0 +1,93 @@
+/*
+<metadata description="Probe: config list plus key handler" target="Lumi">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+    The same eighteen items lumi_paint activates, and nothing else at all.
+
+    probe_config showed six controls, so the keyboard and Dashboard are both fine and
+    the fault is inside lumi_paint. This separates the two things it could be.
+
+    Panel shows a full set of controls
+        The activation list is fine, and something ELSE in lumi_paint takes the panel
+        down - the cluster calls, the config writes, the reporting. Then I look there
+        instead, and stop touching the list.
+
+    Panel is empty
+        One of the twelve items beyond ROLI's six is rejected, and rejection empties the
+        whole panel rather than skipping the item. Then it is a bisect: I halve the
+        list and we do it twice more.
+
+    Two keys are lit so you can tell it loaded: green at the left, blue at the right.
+*/
+
+void initialise()
+{
+    /* The one line this adds over probe_config2, which showed a full panel.
+
+       lumi_paint calls this so it can send its own MIDI - it needs keyStrike and
+       keyMove rather than the firmware's handling. If the panel is empty now, that
+       call is what has been taking it down all along, and the choice becomes sending
+       our own notes or having a settings panel.
+
+       If the panel is still full, the fault is later in lumi_paint's initialise and I
+       carry on down the list. */
+    setUseDefaultKeyHandler(false);
+
+    setLocalConfigActiveState(0, true, true);     // midiStartChannel
+    setLocalConfigActiveState(1, true, true);     // midiEndChannel
+    setLocalConfigActiveState(2, true, true);     // midiUseMPE
+    setLocalConfigActiveState(4, true, true);     // octave
+    setLocalConfigActiveState(9, true, true);     // midiChannelRange
+    setLocalConfigActiveState(40, true, true);    // MPEZone
+
+    setLocalConfigActiveState(3, true, true);     // pitchBendRange
+    setLocalConfigActiveState(5, true, true);     // transpose
+    setLocalConfigActiveState(17, true, true);    // pianoMode
+
+    setLocalConfigActiveState(10, true, true);    // velocitySensitivity
+    setLocalConfigActiveState(11, true, true);    // glideSensitivity
+    setLocalConfigActiveState(13, true, true);    // pressureSensitivity
+    setLocalConfigActiveState(14, true, true);    // liftSensitivity
+    setLocalConfigActiveState(15, true, true);    // fixedVelocity
+    setLocalConfigActiveState(16, true, true);    // fixedVelocityValue
+
+    setLocalConfigActiveState(30, true, true);    // xTrackingMode
+    setLocalConfigActiveState(32, true, true);    // zTrackingMode
+    setLocalConfigActiveState(36, true, true);    // brightness
+
+    setLocalConfigItemRange(4, -4, 6);
+    setLocalConfigItemRange(30, 1, 4);
+    setLocalConfigItemRange(32, 1, 4);
+
+    setLocalConfig(33, 1);                        // gammaCorrection, set not activated
+}
+
+void repaint()
+{
+    for (int k = 0; k < 24; k = k + 1)
+    {
+        fillPixel(0xFF101010, k, 0);
+    }
+
+    fillPixel(0xFF20C040, 0, 0);
+    fillPixel(0xFF2060E0, 23, 0);
+}

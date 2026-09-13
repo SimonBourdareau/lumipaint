@@ -1,0 +1,61 @@
+/*
+<metadata description="Probe: is repaint running, is MIDI arriving" target="LUMI Keys" tags="MIDI;Light;" insertModes="false">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// Answers two questions at once, separately for each block in a chain.
+//
+//   KEY 0  blinks WHITE about twice a second if the firmware is calling repaint() on
+//          this block at frame rate. Frozen means this block never repaints on its
+//          own, and anything drawn here only updates when a message arrives.
+//
+//   KEY 2  blinks GREEN as MIDI reaches this block - it toggles every 8 messages.
+//          Dark and still means this block is receiving nothing.
+//
+//   KEY 4  RED while the block has seen at least one message since it started.
+//
+// Run it with the plugin connected and its background sweep running, on both units.
+// Report each key separately for master and slave.
+
+int numKeys;
+int frameCount;
+int midiCount;
+
+void initialise() {
+    numKeys = 24;
+    frameCount = 0;
+    midiCount = 0;
+}
+
+void handleMIDI(int byte0, int byte1, int byte2) {
+    midiCount = midiCount + 1;
+}
+
+void repaint() {
+    frameCount = frameCount + 1;
+
+    for (int i = 0; i < numKeys; i = i + 1) {
+        fillPixel(0xFF000000, i, 0);
+    }
+
+    if (((frameCount / 12) % 2) == 0) { fillPixel(0xFFFFFFFF, 0, 0); }
+    if (((midiCount / 8) % 2) == 0) { fillPixel(0xFF00FF00, 2, 0); }
+    if (midiCount > 0) { fillPixel(0xFFFF0000, 4, 0); }
+}

@@ -1,0 +1,103 @@
+/*
+<metadata description="Probe: note-to-key mapping" target="LUMI Keys" tags="MIDI;Light;" insertModes="false">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+// Paints each key from the note THIS BLOCK thinks it is, using a fixed 12-colour wheel.
+// No colour data from the plugin is involved at all, so this tests the mapping on its
+// own.
+//
+//   C  red      C# orange   D  amber    D# lime
+//   E  green    F  spring   F# cyan     G  azure
+//   G# blue     A  indigo   A# violet   B  magenta
+//
+// Every C is RED. Read across the chain: the wheel should run continuously from the
+// left unit into the right one with no repeat and no jump at the join.
+//
+//   - wheel correct on both, continuous across the join -> mapping is fine, and the
+//     fault is in how colours get from the plugin into the table
+//   - wheel correct on one unit and shifted on the other -> that unit computes a
+//     different base note
+//   - wheel unstable, colours crawling while you watch -> getClusterXpos() is not
+//     steady and the base is moving underneath the display
+//
+// The octave buttons and CC 87 still work, so you can check the mapping holds while
+// shifting. Key 23 shows this block's cluster position: dim for 0, bright for 1.
+
+int numKeys;
+int startNote;
+int blockSpan;
+int octaveShift;
+
+int wheelColour(int pc) {
+    if (pc == 0)  { return 0xFFFF2B2B; }
+    if (pc == 1)  { return 0xFFFF7A1F; }
+    if (pc == 2)  { return 0xFFFFC400; }
+    if (pc == 3)  { return 0xFFD6FF00; }
+    if (pc == 4)  { return 0xFF5CFF00; }
+    if (pc == 5)  { return 0xFF00FF5C; }
+    if (pc == 6)  { return 0xFF00FFD6; }
+    if (pc == 7)  { return 0xFF00C4FF; }
+    if (pc == 8)  { return 0xFF007AFF; }
+    if (pc == 9)  { return 0xFF2B2BFF; }
+    if (pc == 10) { return 0xFF9C00FF; }
+    return 0xFFFF00B8;
+}
+
+void initialise() {
+    numKeys = 24;
+    startNote = 36;
+    blockSpan = 24;
+    octaveShift = 0;
+}
+
+void handleMIDI(int byte0, int byte1, int byte2) {
+    int status = (byte0 >> 4) & 0x0F;
+
+    if (status == 0xB && byte1 == 87) {
+        int o = byte2 - 64;
+        if (o < -3) { o = -3; }
+        if (o > 3) { o = 3; }
+        octaveShift = o;
+    }
+    else if (status == 0xB && byte1 == 86) {
+        if (byte2 > 0) { blockSpan = byte2; }
+    }
+}
+
+void handleButtonDown(int index) {
+    if (index == 1) { if (octaveShift > -3) { octaveShift = octaveShift - 1; } }
+    else if (index == 2) { if (octaveShift < 3) { octaveShift = octaveShift + 1; } }
+}
+
+void repaint() {
+    int x = getClusterXpos();
+    int base = startNote + (octaveShift * 12) + (x * blockSpan);
+
+    for (int k = 0; k < numKeys; k = k + 1) {
+        int note = base + k;
+
+        if (note < 0 || note > 127) { fillPixel(0xFF000000, k, 0); }
+        else { fillPixel(wheelColour(note % 12), k, 0); }
+    }
+
+    if (x > 0) { fillPixel(0xFFFFFFFF, 23, 0); }
+    else { fillPixel(0xFF303030, 23, 0); }
+}

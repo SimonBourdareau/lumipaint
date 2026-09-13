@@ -1,0 +1,66 @@
+/*
+<metadata description="Probe: config panel only" target="Lumi">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+    The smallest program that should produce a settings panel.
+
+    Nothing but the six items ROLI's own LUMI script activates, copied from
+    StudioLightkeyScript, and one line of lighting so you can see it loaded. No colour
+    table, no cluster code, no reporting, nothing else that could interfere.
+
+    Load it and open Dashboard.
+
+    Panel shows six controls
+        The keyboard is fine and the fault is somewhere in lumi_paint.littlefoot -
+        something it does elsewhere is taking the panel down, and it can be found by
+        adding this program's contents back a piece at a time.
+
+    Panel is empty
+        The keyboard's own configuration is the problem, not the program. Factory reset
+        in Dashboard, then load this again. If it is still empty after a reset, the
+        fault is in Dashboard or the firmware and nothing in a Littlefoot program will
+        change it.
+
+    Either answer is worth more than another guess from me.
+*/
+
+void initialise()
+{
+    setLocalConfigActiveState(0, true, true);    // midiStartChannel
+    setLocalConfigActiveState(1, true, true);    // midiEndChannel
+    setLocalConfigActiveState(2, true, true);    // midiUseMPE
+    setLocalConfigActiveState(4, true, true);    // octave
+    setLocalConfigActiveState(9, true, true);    // midiChannelRange
+    setLocalConfigActiveState(40, true, true);   // MPEZone
+
+    setLocalConfigItemRange(4, -4, 6);
+}
+
+void repaint()
+{
+    for (int k = 0; k < 24; k = k + 1)
+    {
+        fillPixel(0xFF103010, k, 0);
+    }
+
+    fillPixel(0xFF20C040, 0, 0);
+}

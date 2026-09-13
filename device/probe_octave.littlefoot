@@ -1,0 +1,98 @@
+/*
+<metadata description="Probe: octave buttons and cluster sync" target="Lumi">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+    Two questions about the octave buttons, answered on the keys.
+
+    Independent blocks have not worked, and I have guessed at why twice without
+    checking. There are only two possibilities and this separates them.
+
+    Load it on BOTH blocks, then press an octave button on ONE of them.
+
+      keys 0-10   the value of config item 4 on this block
+                  key 5 lit means zero, key 6 means +1, key 4 means -1, and so on
+
+      key 12      flashes white when this block's own octave-down button was pressed
+      key 14      flashes white when this block's own octave-up button was pressed
+
+    What to look for.
+
+    If the bar moves on BOTH blocks when you press a button on ONE, the firmware is
+    syncing the octave across the cluster underneath the program. Nothing the program
+    does can make the blocks independent while the octave lives in config item 4, and
+    the fix is for LumiPaint to keep its own octave and stop using item 4 for it.
+
+    If the bar moves only on the block you pressed, the firmware is not syncing, the
+    sharing is entirely the program's own doing, and independence is simply a matter of
+    not sending it - which is what the toggle already tries to do, so something else is
+    wrong and I want to know that too.
+
+    Whether keys 12 and 14 flash answers the other question: whether the buttons reach
+    the program at all, or are handled in firmware where the program never sees them.
+*/
+
+int flashDown;
+int flashUp;
+
+void initialise()
+{
+    flashDown = 0;
+    flashUp = 0;
+
+    setUseDefaultKeyHandler(true, false);
+    setLocalConfigActiveState(4, true, true);
+    setLocalConfigItemRange(4, -4, 6);
+    setLocalConfigActiveState(36, true, true);
+}
+
+void handleButtonDown(int index)
+{
+    if (index == 1) { flashDown = 25; }
+    if (index == 2) { flashUp = 25; }
+}
+
+void repaint()
+{
+    for (int k = 0; k < 24; k = k + 1) { fillPixel(0xFF080808, k, 0); }
+
+    int octave = getLocalConfig(4);
+    int position = 5 + octave;
+
+    if (position < 0) { position = 0; }
+    if (position > 10) { position = 10; }
+
+    // The zero mark stays lit dimly, so the bar can be read against it.
+    fillPixel(0xFF203040, 5, 0);
+    fillPixel(0xFF20C040, position, 0);
+
+    if (flashDown > 0)
+    {
+        flashDown = flashDown - 1;
+        fillPixel(0xFFFFFFFF, 12, 0);
+    }
+
+    if (flashUp > 0)
+    {
+        flashUp = flashUp - 1;
+        fillPixel(0xFFFFFFFF, 14, 0);
+    }
+}

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 220" width="900" height="220">
+  <!-- Horizontal lockup: the mark, then the name. For a README header or a page. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff3b30"/><stop offset="0.28" stop-color="#ffd60a"/>
+      <stop offset="0.55" stop-color="#30d158"/><stop offset="0.78" stop-color="#00c4ff"/>
+      <stop offset="1" stop-color="#9c6aff"/>
+    </linearGradient>
+    <filter id="s" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="11"/>
+    </filter>
+  </defs>
+
+  <rect x="26" y="52" width="148" height="36" rx="18" fill="url(#g)" filter="url(#s)" opacity="0.95"/>
+  <rect x="34" y="24" width="42" height="88" rx="7" fill="#f2f2f4"/>
+  <rect x="78" y="24" width="42" height="88" rx="7" fill="#00c4ff"/>
+  <rect x="122" y="24" width="42" height="88" rx="7" fill="#f2f2f4"/>
+  <rect x="64" y="24" width="27" height="54" rx="5" fill="#2a2a32"/>
+  <rect x="108" y="24" width="27" height="54" rx="5" fill="#2a2a32"/>
+  <rect x="34" y="118" width="130" height="6" rx="3" fill="url(#g)"/>
+
+  <text x="200" y="94" font-family="Segoe UI, Calibri, DejaVu Sans, sans-serif"
+        font-size="76" font-weight="600" fill="#f2f2f4">Lumi<tspan fill="#00c4ff">Paint</tspan></text>
+  <text x="202" y="140" font-family="Segoe UI, Calibri, DejaVu Sans, sans-serif"
+        font-size="26" fill="#8a8a95">a colour for every note</text>
+</svg>

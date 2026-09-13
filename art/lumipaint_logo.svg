@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    LumiPaint.
+
+    A keyboard fragment seen head on, its keys lit from underneath. Three white keys
+    and two black ones - the smallest arrangement that still reads as a keyboard rather
+    than as bars, because the two blacks sitting between three whites is the pattern the
+    eye recognises.
+
+    The glow is under the keys rather than on them: the plugin lights a keyboard, it
+    does not draw on one. Colour runs across the spectrum because the point of the thing
+    is that every note can be a different one.
+
+    Built to survive 24 pixels. Big shapes, few of them, and the glow doubles as a
+    colour blob when the keys themselves are too small to separate.
+  -->
+
+  <defs>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#ff3b30"/>
+      <stop offset="0.28" stop-color="#ffd60a"/>
+      <stop offset="0.55" stop-color="#30d158"/>
+      <stop offset="0.78" stop-color="#00c4ff"/>
+      <stop offset="1"    stop-color="#9c6aff"/>
+    </linearGradient>
+
+    <linearGradient id="key" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#ffffff"/>
+      <stop offset="0.7" stop-color="#f2f2f4"/>
+      <stop offset="1"   stop-color="#d8d8de"/>
+    </linearGradient>
+
+    <linearGradient id="black" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#4c4c58"/>
+      <stop offset="1"   stop-color="#232329"/>
+    </linearGradient>
+
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="#0c0c10"/>
+
+  <!-- the light, spilling out from under the keys -->
+  <rect x="72" y="300" width="368" height="86" rx="43"
+        fill="url(#glow)" filter="url(#soft)" opacity="0.95"/>
+
+  <!-- white keys -->
+  <g>
+    <rect x="96"  y="128" width="104" height="216" rx="16" fill="url(#key)"/>
+    <rect x="204" y="128" width="104" height="216" rx="16" fill="url(#key)"/>
+    <rect x="312" y="128" width="104" height="216" rx="16" fill="url(#key)"/>
+  </g>
+
+  <!-- black keys, sitting over the joins -->
+  <g>
+    <rect x="170" y="128" width="66" height="132" rx="12" fill="url(#black)"/>
+    <rect x="278" y="128" width="66" height="132" rx="12" fill="url(#black)"/>
+  </g>
+
+  <!-- a single lit key, which is the whole idea of the plugin in one shape -->
+  <rect x="204" y="128" width="104" height="216" rx="16" fill="#00c4ff" opacity="0.9"/>
+  <rect x="204" y="128" width="104" height="216" rx="16" fill="none"
+        stroke="#ffffff" stroke-opacity="0.35" stroke-width="4"/>
+
+  <!-- the black keys again over the lit one, so it reads as behind them -->
+  <g>
+    <rect x="170" y="128" width="66" height="132" rx="12" fill="url(#black)"/>
+    <rect x="278" y="128" width="66" height="132" rx="12" fill="url(#black)"/>
+  </g>
+
+  <!-- the light on the floor -->
+  <rect x="96" y="352" width="320" height="14" rx="7" fill="url(#glow)" opacity="0.9"/>
+</svg>

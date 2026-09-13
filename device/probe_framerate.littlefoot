@@ -1,0 +1,104 @@
+/*
+<metadata description="Probe: frame rate and message rate" target="Lumi">
+</metadata>
+*/
+
+/*
+    LumiPaint - per-note colour control for ROLI LUMI Keys
+    Copyright (C) 2026 Simon Bourdareau
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU General Public License as published by the Free Software
+    Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with
+    this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+    Shows, on the keys themselves, how fast the device is actually running.
+
+    Three fixes to the main program have not made animation any smoother, which means
+    the cause is still unmeasured. This answers the two questions that matter without
+    needing anything on the host side to read a report:
+
+      left half  (keys 0-11)   frames per second, one key per 4 fps
+                               so twelve keys lit is 48 fps, six keys is 24 fps
+
+      right half (keys 12-23)  MIDI messages received per second, one key per 100
+                               so six keys lit is 600 messages a second
+
+    Load this, then run LumiPaint as usual with ripples turned on and play a chord. The
+    left bar shows what the device is managing while that traffic arrives. If it stays
+    near six keys the frame rate is fine and the problem is elsewhere; if it collapses
+    to one or two, the device is the bottleneck and the right bar says how much traffic
+    it took to get there.
+*/
+
+int frames;
+int messages;
+int lastReport;
+int shownFps;
+int shownRate;
+
+void initialise()
+{
+    frames = 0;
+    messages = 0;
+    lastReport = getMillisecondCounter();
+    shownFps = 0;
+    shownRate = 0;
+
+    setUseDefaultKeyHandler(true, false);
+    setLocalConfigActiveState(36, true, true);
+}
+
+void handleMIDI(int byte0, int byte1, int byte2)
+{
+    messages = messages + 1;
+}
+
+void repaint()
+{
+    frames = frames + 1;
+
+    int now = getMillisecondCounter();
+
+    if (now - lastReport >= 1000)
+    {
+        shownFps = frames;
+        shownRate = messages;
+        frames = 0;
+        messages = 0;
+        lastReport = now;
+    }
+
+    for (int k = 0; k < 24; k = k + 1)
+    {
+        int colour = 0xFF101010;
+
+        if (k < 12)
+        {
+            // Frame rate. Green while healthy, amber below 24 fps, red below 12.
+            if ((k + 1) * 4 <= shownFps)
+            {
+                if (shownFps >= 24) { colour = 0xFF20C040; }
+                else if (shownFps >= 12) { colour = 0xFFC08020; }
+                else { colour = 0xFFC02020; }
+            }
+        }
+        else
+        {
+            int step = k - 12;
+
+            if ((step + 1) * 100 <= shownRate) { colour = 0xFF2060C0; }
+        }
+
+        fillPixel(colour, k, 0);
+    }
+}
