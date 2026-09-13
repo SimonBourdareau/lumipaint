@@ -24,3 +24,8 @@ capture_*.ppm
 capture_*.bmp
 *.pyc
 __pycache__/
+
+# the assembled release folder - its contents are attached to a GitHub release,
+# not committed
+release/
+*.zip

@@ -277,7 +277,7 @@ Little use on a plugin that draws a plain piano: there is nothing to copy.
 | `Find anchor` | Play a note into the plugin and watch which key changes — that key is that note, and the anchor follows. Needs the plugin to show played notes on its keybed. |
 | `Lowest C is` | Which MIDI note the leftmost detected C is. Set by `Find anchor`, or by hand. |
 | `Import colours` | Write what was read into the colour table. |
-| `Live` | Re-read the same keys about ten times a second and keep pushing. Detection is not repeated, so this is one capture and a few hundred pixel reads. |
+| `Live` | Keep re-reading those keys and pushing the colours, about five times a second. Detection is not repeated, so this is one capture and a few hundred pixel reads. It keeps running with the LumiPaint window closed, and if the plugin being followed is closed and reopened it finds the window again by title. |
 
 ### Degrees
 
@@ -336,7 +336,6 @@ sensitivity curves, fixed velocity, pitch bend range, tracking modes and brightn
 | `Octave` | Shifts notes and lights together. Follows the hardware buttons. |
 | `Display offset` | Shifts what the lights show without moving the notes, for when something upstream transposes but the keyboard does not know. |
 | `Fold octaves` | A lit note lights every key of its pitch class, so notes outside the visible window still show. |
-| `Block span` | Obsolete. Chained blocks place themselves. |
 
 ---
 
