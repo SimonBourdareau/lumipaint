@@ -1208,9 +1208,14 @@ private:
         if (ImGui::Checkbox ("Live", &captureLive))
         {
             if (captureLive)
+            {
                 owner->link.setFollowSource (owner->capture, captureAnchor);
+                appliedAnchor = captureAnchor;
+            }
             else
+            {
                 owner->link.stopFollowing();
+            }
         }
 
         if (captureLive)
@@ -1229,7 +1234,14 @@ private:
         runAnchorProbe();
 
         ImGui::SetNextItemWidth (110.0f);
-        ImGui::DragInt ("Lowest C is", &captureAnchor, 0.25f, 0, 120, "note %d");
+
+        {
+            int typed = captureAnchor;
+
+            if (ImGui::DragInt ("Lowest C is", &typed, 0.25f, 0, 120, "note %d"))
+                setCaptureAnchor (typed);
+        }
+
         ImGui::SameLine();
         ImGui::Text ("%s%d", kNoteNames[pitchClassOf (captureAnchor)],
                      octaveOf (captureAnchor));
@@ -1238,6 +1250,7 @@ private:
         if (ImGui::Button ("Import colours", ImVec2 (130.0f, 0.0f)))
         {
             owner->capture->applyTo (owner->link, captureAnchor);
+            appliedAnchor = captureAnchor;
             markDirty();
         }
 
@@ -1556,6 +1569,54 @@ private:
     }
 
     /*
+        Moving the anchor, which has to reach three places and used to reach one.
+
+        The follow loop lives on the worker now, and the worker reads followAnchor -
+        which was written only when the Live box was ticked. So Find anchor could resolve
+        the anchor perfectly, print the right note, and change nothing at all: the worker
+        carried on placing the captured colours at whatever anchor was current when
+        following started. Dragging the field by hand had the same non-effect. Before
+        following moved off the editor's draw loop this could not happen, because the
+        editor passed the live value on every frame.
+
+        Clearing the old span matters as much as setting the new one. applyTo only writes
+        the notes the capture covers, so shifting down an octave leaves the top octave
+        lit at its last values - which reads as the shift not having happened rather than
+        as leftovers. Only cleared when colours were actually applied at that anchor, so
+        a first Find anchor cannot wipe a map painted by hand.
+    */
+    void setCaptureAnchor (int note)
+    {
+        const int clamped = note < 0 ? 0 : (note > 120 ? 120 : note);
+
+        if (clamped == captureAnchor)
+            return;
+
+        if (appliedAnchor >= 0)
+        {
+            int semi = 0;
+            uint32_t rgb = 0;
+
+            for (int i = 0; owner->capture->keyInfo (i, semi, rgb); ++i)
+            {
+                const int old = appliedAnchor + semi;
+
+                if (old >= 0 && old < 128)
+                    owner->link.setColour (old, 0);
+            }
+        }
+
+        captureAnchor = clamped;
+        owner->capture->applyTo (owner->link, captureAnchor);
+        appliedAnchor = captureAnchor;
+
+        if (captureLive)
+            owner->link.setFollowSource (owner->capture, captureAnchor);
+
+        markDirty();
+    }
+
+    /*
         Works out the anchor by playing a note and watching the plugin.
 
         LumiPaint sits before the instrument on its track, so the note reaches the
@@ -1635,9 +1696,8 @@ private:
                    usable change; say so rather than moving the anchor to noise. */
                 if (bestDelta > 40)
                 {
-                    captureAnchor = probeNote - bestSemi;
+                    setCaptureAnchor (probeNote - bestSemi);
                     probeResult = "anchor found";
-                    markDirty();
                 }
                 else
                 {
@@ -1952,6 +2012,10 @@ private:
     bool shownOnce = false;
     int captureIndex = 0;
     int captureAnchor = 36;
+
+    /* The anchor the captured colours are currently sitting at, or -1 when none have
+       been applied. Only that span is cleared when the anchor moves. */
+    int appliedAnchor = -1;
     bool captureLive = false;
     std::string presetMessage;
 
