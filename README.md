@@ -59,8 +59,11 @@ a copy that missed the nested file leaves a bundle that looks right and cannot l
 Install whichever format your host uses; there is no advantage to having both, and some
 hosts will show the plugin twice if you do.
 
-Rescan plugins in your host afterwards. Then carry on from step 0 below, which you need
-either way — the keyboard has to be flashed before any of this does anything.
+Rescan plugins in your host afterwards.
+
+Then follow **step 0** and **step 1** below — the keyboard has to be flashed before any of
+this does anything — **skip step 2**, which is building from source, and go on to
+**steps 3 and 4**.
 
 ### Building it yourself
 
