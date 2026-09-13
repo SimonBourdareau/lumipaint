@@ -32,6 +32,8 @@
 
 namespace lumipaint {
 
+class KeybedCapture;
+
 const uint8_t kControlChannel = 15;
 const uint8_t kCcBrightness   = 106;
 const uint8_t kCcUnlitLevel   = 107;
@@ -132,6 +134,16 @@ const uint8_t kCmdAllKeysOff   = 1;
 const uint8_t kCmdResetColours = 2;
 
 const uint32_t kStateMagic   = 0x4c554d31;
+/*
+    The released version, in one place.
+
+    It is what the host shows in its plugin list, what the editor prints under the
+    wordmark, and what a bug report will quote - so it must not be able to disagree with
+    itself. The descriptor said 0.1.0 while the first release was tagged v1.0.0, which is
+    exactly the kind of small lie that wastes someone's afternoon.
+*/
+const char * const kPluginVersion = "1.0.0";
+
 const uint32_t kStateVersion = 25;
 
 enum ParamId
@@ -213,6 +225,21 @@ public:
     int getMessagesIn() const { return messagesIn.load (std::memory_order_relaxed); }
     int getLastCcIn() const { return lastCcIn.load (std::memory_order_relaxed); }
     void countMessageIn (int cc);
+
+    /*
+        Following another plugin's keyboard, driven by the worker rather than the editor.
+
+        This used to run inside the editor's draw loop, so closing the window stopped it -
+        even though nothing about following another plugin needs this plugin's window to
+        be open. The editor is what is optional; what it was doing is not.
+
+        The capture object itself stays in the editor, which owns the detection and the
+        controls. What moves here is the ticking: the worker asks for a refresh a few
+        times a second whether or not anyone is looking.
+    */
+    void setFollowSource (KeybedCapture *source, int anchorNote);
+    void stopFollowing();
+    bool isFollowing() const;
 
 
     /* Whether a note is currently sounding, from this plugin's own view of what is
@@ -633,6 +660,11 @@ private:
     std::atomic<int> lastCcIn;
     std::atomic<int> directIn;
     std::atomic<int> lastDirect;
+
+    /* Following another plugin's keyboard, ticked by the worker. */
+    std::atomic<KeybedCapture *> followSource;
+    std::atomic<int> followAnchor;
+    int followTick;
     std::string requestedInput;
     std::string openedInput;
     mutable std::mutex inputMutex;
@@ -708,6 +740,15 @@ struct GuiParamSlot
 
 struct LumiPaint
 {
+    /*
+        The capture is owned by the plugin, not the editor.
+
+        The worker follows it whether or not the window is open, so it cannot be a member
+        of something the host destroys when the editor closes - that would leave the
+        worker reading freed memory. Created with the plugin, destroyed with it.
+    */
+    KeybedCapture *capture = nullptr;
+
     clap_plugin_t plugin;
     const clap_host_t *host;
     LumiLink link;

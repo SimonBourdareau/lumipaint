@@ -44,20 +44,23 @@ would need changing and how to find out in one flash.
 The quickest way in is the [latest release](../../releases/latest), which has both plugin
 formats built for Windows and the device program, so nothing needs compiling.
 
-Unzip it and put the pieces where your host looks for them:
+Unzip the whole thing into a folder and double-click **`install-windows.bat`**. It copies
+both plugin formats into your per-user plugin folders — no administrator prompt, because
+those locations belong to you and every host scans them.
+
+`uninstall-windows.bat` removes them again.
+
+If you would rather do it by hand:
 
 | File | Where it goes |
 | --- | --- |
 | `LumiPaint.clap` | `%LOCALAPPDATA%\Programs\Common\CLAP\` |
-| `LumiPaint.vst3` | `C:\Program Files\Common Files\VST3\` |
+| `LumiPaint.vst3` | `%LOCALAPPDATA%\Programs\Common\VST3\` |
 | `lumi_paint.littlefoot` | not installed — dragged onto the keyboard in ROLI Dashboard, see below |
 
 `LumiPaint.vst3` is a **folder**, not a file. Copy the whole thing, and if your host does
 not list it, check that `LumiPaint.vst3\Contents\x86_64-win\LumiPaint.vst3` is inside —
 a copy that missed the nested file leaves a bundle that looks right and cannot load.
-
-Install whichever format your host uses; there is no advantage to having both, and some
-hosts will show the plugin twice if you do.
 
 Rescan plugins in your host afterwards.
 

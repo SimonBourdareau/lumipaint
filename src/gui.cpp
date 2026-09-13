@@ -414,7 +414,13 @@ private:
         dl->AddText (nullptr, 25.0f,
                      ImVec2 (p.x + ImGui::CalcTextSize ("Lumi").x * scale, p.y + 1.0f),
                      IM_COL32 (0, 196, 255, 245), "Paint");
-        ImGui::Dummy (ImVec2 (200.0f, 26.0f));
+
+        /* The version under the wordmark, quietly. Someone reporting a problem should
+           not have to go looking for which build they are on. */
+        dl->AddText (nullptr, 13.0f, ImVec2 (p.x + 2.0f, p.y + 28.0f),
+                     IM_COL32 (110, 114, 124, 220), kPluginVersion);
+
+        ImGui::Dummy (ImVec2 (200.0f, 40.0f));
     }
 
     void drawPortSelector()
@@ -1143,12 +1149,12 @@ private:
     {
         if (ImGui::Button ("Find windows", ImVec2 (110.0f, 0.0f)))
         {
-            capture.refreshWindows();
+            owner->capture->refreshWindows();
             captureIndex = 0;
         }
 
         ImGui::SameLine();
-        const auto &wins = capture.windows();
+        const auto &wins = owner->capture->windows();
         const char *preview = wins.empty() ? "(none found)"
                                            : wins[(size_t) captureIndex].title.c_str();
         ImGui::SetNextItemWidth (250.0f);
@@ -1164,35 +1170,38 @@ private:
 
         if (ImGui::Button ("Read keyboard", ImVec2 (110.0f, 0.0f)) && ! wins.empty())
         {
-            if (capture.grab ((size_t) captureIndex))
-                capture.detect();
+            if (owner->capture->grab ((size_t) captureIndex))
+                owner->capture->detect();
+
+                if (captureIndex < owner->capture->windows().size())
+                    owner->capture->rememberTitle (owner->capture->windows()[captureIndex].title);
         }
 
         ImGui::SameLine();
-        ImGui::TextDisabled ("%s", capture.status().c_str());
+        ImGui::TextDisabled ("%s", owner->capture->status().c_str());
 
-        if (! capture.hasResult())
+        if (! owner->capture->hasResult())
             return;
 
         /* Re-reads the same key positions a few times a second. Detection is not
            repeated - the geometry is already known - so this costs one window capture
            and a few hundred pixel reads, and the keyboard follows whatever the plugin
            draws as you change patch or articulation. */
+        /* Handed to the worker rather than ticked here, so it keeps following after this
+           window is closed. */
         if (ImGui::Checkbox ("Live", &captureLive))
-            captureTick = 0;
+        {
+            if (captureLive)
+                owner->link.setFollowSource (owner->capture, captureAnchor);
+            else
+                owner->link.stopFollowing();
+        }
 
         if (captureLive)
         {
             ImGui::SameLine();
-            ImGui::TextDisabled ("following the plugin");
-
-            if (++captureTick >= 12)
-            {
-                captureTick = 0;
-
-                if (! capture.refresh (owner->link, captureAnchor))
-                    captureLive = false;
-            }
+            ImGui::TextDisabled (owner->capture->hasResult() ? "following, editor can be closed"
+                                                     : "window lost - looking for it again");
         }
 
         /* Nothing in the pixels says which C is middle C. It can be found rather than
@@ -1212,7 +1221,7 @@ private:
 
         if (ImGui::Button ("Import colours", ImVec2 (130.0f, 0.0f)))
         {
-            capture.applyTo (owner->link, captureAnchor);
+            owner->capture->applyTo (owner->link, captureAnchor);
             markDirty();
         }
 
@@ -1224,7 +1233,7 @@ private:
 
         for (int s = 0; s < 61; ++s)
         {
-            const uint32_t rgb = capture.colourAt (s);
+            const uint32_t rgb = owner->capture->colourAt (s);
 
             if (rgb == 0)
                 continue;
@@ -1553,7 +1562,7 @@ private:
                     int semi = 0;
                     uint32_t rgb = 0;
 
-                    for (int i = 0; capture.keyInfo (i, semi, rgb); ++i)
+                    for (int i = 0; owner->capture->keyInfo (i, semi, rgb); ++i)
                         probeBefore.push_back ({ semi, rgb });
                 }
 
@@ -1567,7 +1576,7 @@ private:
                 if (++probeWait < 30)
                     break;
 
-                capture.sample();
+                owner->capture->sample();
                 probeStage = 3;
                 break;
 
@@ -1580,7 +1589,7 @@ private:
                 int semi = 0;
                 uint32_t rgb = 0;
 
-                for (int i = 0; capture.keyInfo (i, semi, rgb); ++i)
+                for (int i = 0; owner->capture->keyInfo (i, semi, rgb); ++i)
                 {
                     for (const auto &b : probeBefore)
                     {
@@ -1917,7 +1926,6 @@ private:
     float scaleInColour[3];
     float scaleOutColour[3];
     bool shownOnce = false;
-    KeybedCapture capture;
     int captureIndex = 0;
     int captureAnchor = 36;
     bool captureLive = false;

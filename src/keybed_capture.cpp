@@ -1214,6 +1214,32 @@ bool KeybedCapture::refresh (LumiLink &link, int anchorNote)
     return refreshInternal (&link, anchorNote);
 }
 
+/*
+    Find the followed window again after it has been closed and reopened.
+
+    Matched by title rather than by handle, and only the geometry is kept - the keys are
+    where they were, because the plugin reopens at the size it was left. If it does not,
+    the size check in the refresh below notices and stops rather than sampling nonsense.
+*/
+bool KeybedCapture::refindWindow()
+{
+    if (followTitle.empty())
+        return false;
+
+    refreshWindows();
+
+    for (const CaptureWindow &w : windowList)
+    {
+        if (w.title == followTitle && w.width == width && w.height == height)
+        {
+            lastWindow = w.handle;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool KeybedCapture::refreshInternal (LumiLink *link, int anchorNote)
 {
     if (keys.empty() || lastWindow == nullptr)

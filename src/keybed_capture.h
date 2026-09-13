@@ -64,6 +64,18 @@ public:
 
     bool grab (size_t index);
 
+    /*
+        The window this was detected in, by title, so it can be found again.
+
+        A window handle is only valid while the window exists. Close the plugin whose
+        keyboard is being followed and the handle is dead; reopen it and the new window
+        has a different one, so following it by handle alone stops for good. The title
+        survives that, and is how the window is found again.
+    */
+    void rememberTitle (const std::string &title) { followTitle = title; }
+    const std::string &rememberedTitle() const { return followTitle; }
+    bool refindWindow();
+
     /* Re-read the colours of an already-detected keyboard and push them straight out.
        Detection is not repeated: the geometry is known, so this is a capture and a
        few hundred pixel reads. Cheap enough to run several times a second, which is
@@ -119,6 +131,7 @@ private:
     int width;
     int height;
     void *lastWindow;
+    std::string followTitle;
     std::vector<Key> keys;
     float measuredWhiteWidth;
     int detectedOctaves;

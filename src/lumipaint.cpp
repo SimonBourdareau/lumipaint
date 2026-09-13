@@ -16,6 +16,7 @@
 */
 
 #include "lumipaint.h"
+#include "keybed_capture.h"
 
 #if defined (_WIN32)
  /* far, near and min/max are macros in the Windows headers and collide with ordinary
@@ -262,6 +263,9 @@ LumiLink::LumiLink()
     lastCcIn.store (-1, std::memory_order_relaxed);
     directIn.store (0, std::memory_order_relaxed);
     lastDirect.store (-1, std::memory_order_relaxed);
+    followSource.store (nullptr, std::memory_order_relaxed);
+    followAnchor.store (36, std::memory_order_relaxed);
+    followTick = 0;
     for (int i = 0; i < 5; ++i)
         blockLow[i].store (-1, std::memory_order_relaxed);
 
@@ -1947,6 +1951,22 @@ bool LumiLink::isNoteSounding (int note) const
     return ((word >> (note & 63)) & 1ull) != 0ull;
 }
 
+void LumiLink::setFollowSource (KeybedCapture *source, int anchorNote)
+{
+    followAnchor.store (anchorNote, std::memory_order_relaxed);
+    followSource.store (source, std::memory_order_release);
+}
+
+bool LumiLink::isFollowing() const
+{
+    return followSource.load (std::memory_order_relaxed) != nullptr;
+}
+
+void LumiLink::stopFollowing()
+{
+    followSource.store (nullptr, std::memory_order_release);
+}
+
 void LumiLink::countMessageIn (int cc)
 {
     messagesIn.fetch_add (1, std::memory_order_relaxed);
@@ -2301,6 +2321,25 @@ void LumiLink::run()
 
         /* Idle time, reset by anything played. The waves ride on it. */
         idleMs.fetch_add (elapsedMs, std::memory_order_relaxed);
+
+        /*
+            Re-read the followed plugin's keyboard, whether or not the editor is open.
+
+            Roughly five times a second: fast enough that a keyswitch change appears at
+            once, slow enough that a few hundred pixel reads cost nothing. If the window
+            has gone, it is looked for again by title - a plugin that is closed and
+            reopened gets a new handle, and following by handle alone would stop for
+            good.
+        */
+        if (++followTick >= 50)
+        {
+            followTick = 0;
+            KeybedCapture *source = followSource.load (std::memory_order_acquire);
+
+            if (source != nullptr)
+                if (! source->refresh (*this, followAnchor.load (std::memory_order_relaxed)))
+                    source->refindWindow();
+        }
         wavePhase += elapsedMs;
 
         advanceGlow (elapsedMs);
@@ -3383,6 +3422,11 @@ void pluginDestroy (const clap_plugin_t *plugin)
 {
     LumiPaint *self = (LumiPaint *) plugin->plugin_data;
 
+    /* Stop the worker looking at it before it goes. */
+    self->link.stopFollowing();
+    delete self->capture;
+    self->capture = nullptr;
+
     /* The worker goes first.
 
        Tearing the editor down before stopping the thread meant that if anything in the
@@ -4121,7 +4165,7 @@ const clap_plugin_descriptor_t s_descriptor = {
     "",
     "",
     "",
-    "0.1.0",
+    kPluginVersion,
     "Per-note colour display for ROLI LUMI Keys",
     s_features
 };
@@ -4134,6 +4178,7 @@ const clap_plugin_t *createPlugin (const clap_plugin_factory_t *factory, const c
         return nullptr;
 
     LumiPaint *self = new LumiPaint();
+    self->capture = new KeybedCapture();
     std::memset (self->refCount, 0, sizeof (self->refCount));
     self->litBits[0] = 0;
     self->litBits[1] = 0;
