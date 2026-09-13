@@ -642,7 +642,7 @@ private:
         ImGui::EndChild();
 
         if (hitNote >= 0)
-            ImGui::SetTooltip ("%s%d", kNoteNames[pitchClassOf (hitNote)], hitNote / 12 - 1);
+            ImGui::SetTooltip ("%s%d", kNoteNames[pitchClassOf (hitNote)], octaveOf (hitNote));
     }
 
     void drawKey (ImDrawList *draw, int note, float x, float y, float width, float height, bool isHovered)
@@ -677,6 +677,12 @@ private:
 
         if (isHovered)
             draw->AddRect (tl, br, IM_COL32 (180, 200, 255, 200), 2.0f, 0, 1.5f);
+    }
+
+    /* The octave number shown beside a note name. See kOctaveNameOffsets. */
+    int octaveOf (int note) const
+    {
+        return note / 12 + kOctaveNameOffsets[middleCStyle];
     }
 
     int whiteIndexForNote (int note) const
@@ -820,7 +826,7 @@ private:
             selectSingle (anchorNote);
 
         ImGui::SameLine();
-        ImGui::Text ("%s%d", kNoteNames[pitchClassOf (anchorNote)], anchorNote / 12 - 1);
+        ImGui::Text ("%s%d", kNoteNames[pitchClassOf (anchorNote)], octaveOf (anchorNote));
         ImGui::SameLine();
 
         if (ImGui::Button ("Set this note", ImVec2 (120.0f, 0.0f)))
@@ -1014,6 +1020,17 @@ private:
         drawOctaveControl();
         drawOffsetControl();
         drawFoldControl();
+
+        /* Set this to whatever your DAW calls middle C, so the two agree. It changes
+           labels here and nothing else - no MIDI, no colours, no octave shift. */
+        ImGui::SetNextItemWidth (240.0f);
+
+        if (ImGui::Combo ("Middle C is", &middleCStyle, "C2\0C3\0C4\0C5\0"))
+            markDirty();
+
+        ImGui::SameLine();
+        ImGui::TextDisabled ("note 60, named to match your DAW");
+
         ImGui::TextDisabled ("keys show the note they actually play");
     }
 
@@ -1216,7 +1233,7 @@ private:
         ImGui::DragInt ("Lowest C is", &captureAnchor, 0.25f, 0, 120, "note %d");
         ImGui::SameLine();
         ImGui::Text ("%s%d", kNoteNames[pitchClassOf (captureAnchor)],
-                     captureAnchor / 12 - 1);
+                     octaveOf (captureAnchor));
         ImGui::SameLine();
 
         if (ImGui::Button ("Import colours", ImVec2 (130.0f, 0.0f)))
@@ -1904,7 +1921,7 @@ private:
 
     const char *octaveLabel (int note)
     {
-        std::snprintf (labelBuffer, sizeof (labelBuffer), "C%d", note / 12 - 1);
+        std::snprintf (labelBuffer, sizeof (labelBuffer), "C%d", octaveOf (note));
         return labelBuffer;
     }
 
@@ -1921,6 +1938,9 @@ private:
     float pickerColour[3];
     int paintScope;
     int scaleRoot;
+
+    /* Which octave naming to show. Labels only - nothing about the MIDI changes. */
+    int middleCStyle = 1;   /* index 1 = offset -2 = note 60 reads C3, as before */
     int scaleIndex;
     float scaleRootColour[3];
     float scaleInColour[3];
