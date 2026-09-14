@@ -10,6 +10,7 @@ rtmidi/
 obj/
 build/
 build-vst3/
+build-macos/
 build-vst3.log
 *.clap
 *.vst3
@@ -20,6 +21,7 @@ build-vst3.log
 *.dylib
 
 # Tool output
+.DS_Store
 capture_*.ppm
 capture_*.bmp
 *.pyc

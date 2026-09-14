@@ -17,6 +17,7 @@
 
 #include "lumipaint.h"
 #include "keybed_capture.h"
+#include "silent_audio.h"
 
 #if defined (_WIN32)
  /* far, near and min/max are macros in the Windows headers and collide with ordinary
@@ -3478,6 +3479,7 @@ void pluginReset (const clap_plugin_t *plugin)
 
 clap_process_status pluginProcess (const clap_plugin_t *plugin, const clap_process_t *process)
 {
+    clearSilentOutput(process);
     LumiPaint *self = (LumiPaint *) plugin->plugin_data;
     const clap_input_events_t *in = process->in_events;
     const clap_output_events_t *out = process->out_events;
@@ -3581,6 +3583,31 @@ clap_process_status pluginProcess (const clap_plugin_t *plugin, const clap_proce
     self->link.publishLitBits (self->litBits[0], self->litBits[1]);
     return CLAP_PROCESS_CONTINUE;
 }
+
+// Live loads the VST3 as an instrument and requires a main audio output even
+// though LumiPaint only produces MIDI. Always write silence to that output.
+uint32_t audioPortsCount (const clap_plugin_t *, bool isInput)
+{
+    return isInput ? 0 : 1;
+}
+
+bool audioPortsGet (const clap_plugin_t *, uint32_t index, bool isInput,
+                    clap_audio_port_info_t *info)
+{
+    if (isInput || index != 0)
+        return false;
+
+    *info = {};
+    info->id = 0;
+    std::snprintf(info->name, sizeof(info->name), "Silent Output");
+    info->flags = CLAP_AUDIO_PORT_IS_MAIN | CLAP_AUDIO_PORT_SUPPORTS_64BITS;
+    info->channel_count = 2;
+    info->port_type = CLAP_PORT_STEREO;
+    info->in_place_pair = CLAP_INVALID_ID;
+    return true;
+}
+
+const clap_plugin_audio_ports_t s_audioPorts = { audioPortsCount, audioPortsGet };
 
 uint32_t notePortsCount (const clap_plugin_t *plugin, bool isInput)
 {
@@ -4134,6 +4161,9 @@ const clap_plugin_state_t s_state = { stateSave, stateLoad };
 const void *pluginGetExtension (const clap_plugin_t *plugin, const char *id)
 {
     (void) plugin;
+
+    if (std::strcmp (id, CLAP_EXT_AUDIO_PORTS) == 0)
+        return &s_audioPorts;
 
     if (std::strcmp (id, CLAP_EXT_NOTE_PORTS) == 0)
         return &s_notePorts;
