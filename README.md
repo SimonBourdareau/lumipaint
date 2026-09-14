@@ -41,8 +41,11 @@ would need changing and how to find out in one flash.
 
 ## Setting it up
 
-**macOS:** unzip the Mac package and double-click `install-macos.command`.
-From a source checkout, build into `build-macos` first using the commands below.
+**macOS:** unzip the Mac package and double-click **Install LumiPaint.app**.
+The app runs setup directly without opening Terminal or loading your interactive
+shell configuration. It contains all payloads, so moving the app does not break
+installation. From a source checkout, build into `build-macos` first using the
+commands below, then run `./package-macos.sh` to create the app.
 The installer validates the signed bundles, installs VST3 and CLAP into your
 user Library, and backs up any previous installation. It keeps the device file at
 `~/Library/Application Support/LumiPaint/lumi_paint.littlefoot`.
@@ -58,10 +61,19 @@ folder and ZIP under `release/`, including the installer, both plugins, Littlefo
 license and setup instructions. These are locally signed development builds;
 they are not notarized for public distribution.
 
+If macOS blocks the download, attempt to open it, then check **System Settings >
+Privacy & Security > Open Anyway**, following [Apple's instructions](https://support.apple.com/102445).
+The plugin may also need approval before rescanning it in Live. You can cancel
+the Dashboard step after the plugins are installed to test loading without
+replacing the keyboard program.
+
 For a preflight without installation, use `./install-macos.command --check`.
 `--install-only` skips the dialogs and Dashboard handoff; close DAWs before using
 it. The installer tests (`bash tests/macos_installer_test.sh`) use temporary
 Library folders and never access the keyboard.
+To test the packaged app, run `bash tests/macos_launcher_test.sh "/path/to/Install LumiPaint.app"`.
+This checks a relocated app, paths containing spaces and apostrophes, installation
+to a temporary Library, and independence from Bash startup hooks.
 
 **Windows:** the [latest release](../../releases/latest) has both plugin
 formats built for Windows and the device program, so nothing needs compiling.
