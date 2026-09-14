@@ -19,6 +19,30 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Objective-C++ has to be enabled before a .mm file can be compiled.
+#
+# Without this the macOS build does not fail loudly: CMake knows .mm is OBJCXX, finds
+# the language disabled, and quietly leaves imgui_host_macos.mm, preset_macos.mm,
+# keybed_capture_macos.mm and imgui's own imgui_impl_osx.mm out of the target. What you
+# get is a link error listing every symbol those four files define, which reads like
+# missing frameworks rather than a project() line three hundred lines above.
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+
+    # NSOpenGLView, NSModalResponse and the rest need a floor somewhere, and the default
+    # is whatever SDK happens to be installed. Universal by default so one build serves
+    # Intel and Apple silicon; override either on the command line.
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "" FORCE)
+    endif()
+
+    if(NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
+    endif()
+endif()
+
 # Where build_gui.sh clones them: beside the project, not under extern/.
 #
 # These defaulted to extern/ and nothing ever put anything there. The CLAP build never
@@ -79,6 +103,24 @@ add_library(LumiPaint MODULE
     ${LUMIPAINT_HOST_SOURCES}
 )
 
+# ARC for our own Objective-C++, which the sources already assume.
+#
+# Every __bridge cast in imgui_host_macos.mm and keybed_capture_macos.mm means nothing
+# without it, and the window host holds NSWindow, NSOpenGLView and NSTimer as strong
+# references that it never releases by hand. Nothing was passing -fobjc-arc, so those
+# files were being compiled under manual retain/release, where the casts are meaningless
+# and every one of those references leaks.
+#
+# imgui_impl_osx.mm is left alone deliberately: it guards on __has_feature(objc_arc) and
+# works either way, and ARC is per translation unit, so mixing is fine.
+if(APPLE)
+    set_source_files_properties(
+        src/imgui_host_macos.mm
+        src/preset_macos.mm
+        src/keybed_capture_macos.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+endif()
+
 target_include_directories(LumiPaint PRIVATE
     src
     ${CLAP_DIR}/include
@@ -92,8 +134,11 @@ target_link_libraries(LumiPaint PRIVATE Threads::Threads)
 
 if(APPLE)
     target_compile_definitions(LumiPaint PRIVATE __MACOSX_CORE__)
+    # CoreMIDI and friends for RtMidi; Cocoa for the window and the dialogs;
+    # CoreGraphics for reading another application's window; OpenGL for the editor.
     target_link_libraries(LumiPaint PRIVATE
-        "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation")
+        "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation"
+        "-framework Cocoa" "-framework CoreGraphics" "-framework OpenGL")
 elseif(WIN32)
     target_compile_definitions(LumiPaint PRIVATE __WINDOWS_MM__)
 
@@ -129,16 +174,42 @@ else()
     # whatever the host has already loaded, and the only thing one would buy here is a
     # file dialog, which zenity or kdialog provide from outside the process.
     find_package(X11 REQUIRED)
+
+    # Without this, a machine carrying both the GLVND and the legacy libGL emits a
+    # CMP0072 policy warning in the middle of the configure step, which looks like a
+    # problem and is not one.
+    set(OpenGL_GL_PREFERENCE GLVND)
     find_package(OpenGL REQUIRED)
     target_link_libraries(LumiPaint PRIVATE ${X11_LIBRARIES} OpenGL::GL OpenGL::GLX)
     target_include_directories(LumiPaint PRIVATE ${X11_INCLUDE_DIR})
 endif()
 
-set_target_properties(LumiPaint PROPERTIES
-    PREFIX ""
-    SUFFIX ".clap"
-    OUTPUT_NAME "LumiPaint"
-)
+#
+#  A CLAP is one file on Windows and Linux and a bundle on macOS.
+#
+#  PREFIX/SUFFIX alone produced a bare Mach-O called LumiPaint.clap, which no host will
+#  load: the format wants LumiPaint.clap/Contents/MacOS/LumiPaint beside an Info.plist
+#  saying BNDL. The README even said to copy it with `cp -r`, which only makes sense for
+#  a directory - the instruction had been written for the bundle this did not build.
+#
+if(APPLE)
+    set_target_properties(LumiPaint PROPERTIES
+        BUNDLE TRUE
+        BUNDLE_EXTENSION "clap"
+        OUTPUT_NAME "LumiPaint"
+        MACOSX_BUNDLE_BUNDLE_NAME "LumiPaint"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.lumipaint.clap"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+        MACOSX_BUNDLE_COPYRIGHT "Copyright (C) 2026 Simon Bourdareau"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-bundle.plist.in")
+else()
+    set_target_properties(LumiPaint PROPERTIES
+        PREFIX ""
+        SUFFIX ".clap"
+        OUTPUT_NAME "LumiPaint"
+    )
+endif()
 
 # ==============================================================================
 #  VST3, and AU on a Mac, without a second implementation
@@ -156,13 +227,6 @@ set_target_properties(LumiPaint PROPERTIES
 # ==============================================================================
 
 option (LUMIPAINT_BUILD_VST3 "Also build a VST3 through clap-wrapper" OFF)
-
-if (APPLE)
-    # Cocoa for the window and the dialogs, CoreGraphics for reading another
-    # application's window.
-    target_link_libraries (LumiPaint PRIVATE
-        "-framework Cocoa" "-framework CoreGraphics" "-framework OpenGL")
-endif()
 
 if (LUMIPAINT_BUILD_VST3)
     include (FetchContent)

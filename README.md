@@ -141,10 +141,14 @@ run against a real host or a real keyboard. See *Known limitations* for what tha
 macOS:
 
 ```sh
-cmake -B build -DLUMIPAINT_HOST_SOURCES=src/imgui_host_macos.mm
+cmake -B build
 cmake --build build
 cp -r build/LumiPaint.clap ~/Library/Audio/Plug-Ins/CLAP/
 ```
+
+`LUMIPAINT_HOST_SOURCES` no longer needs spelling out — each platform has one sensible
+answer and CMake picks it. The result is a bundle, not a file, hence `cp -r`. Universal
+by default; `-DCMAKE_OSX_ARCHITECTURES=arm64` builds for Apple silicon alone.
 
 Linux:
 
