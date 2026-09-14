@@ -2,6 +2,62 @@
 # Installs local plugins and prepares the supported Dashboard device-upload step.
 set -euo pipefail
 
+show_dialog() {
+    /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT'
+on run argv
+    activate
+    display dialog (item 1 of argv) with title "LumiPaint Setup" buttons {"Cancel", item 2 of argv} default button 2
+end run
+APPLESCRIPT
+}
+
+show_notice() {
+    /usr/bin/osascript - "$1" <<'APPLESCRIPT'
+on run argv
+    activate
+    display dialog (item 1 of argv) with title "LumiPaint Setup" buttons {"OK"} default button 1
+end run
+APPLESCRIPT
+}
+
+open_dashboard() { /usr/bin/open -b com.roli.rolidashboard; }
+reveal_program() { /usr/bin/open -R "$1"; }
+
+dashboard_handoff() {
+    local installed_program=$1
+    show_dialog "Plugins installed. Optional step: set up your keyboard.
+
+If your LUMI already has the LumiPaint program, choose Cancel to finish. You can also test plugin loading without setting up a keyboard.
+
+For a new setup, connect LUMI by USB. ROLI Dashboard must show firmware 1.3.0 or later. Drag the selected lumi_paint.littlefoot file onto your keyboard's picture in Dashboard. A dim rainbow is the expected result.
+
+This replaces the keyboard's current program. The repository documents Dashboard's factory reset as the way to restore ROLI's program.
+
+The file has only been copied to your Mac so far; setup cannot verify an upload." "Open Dashboard" >/dev/null || return 0
+
+    if ! open_dashboard; then
+        show_notice "Your LumiPaint plugins are installed.
+
+ROLI Dashboard could not be opened. If it is not installed on this Mac, install ROLI Connect, then use it to install ROLI Dashboard.
+
+You can finish now and test LumiPaint in your DAW. If your keyboard already has the LumiPaint program, you do not need to upload it again.
+
+For a new keyboard setup, open Dashboard after installing it and drag in lumi_paint.littlefoot. Finder will show the saved file next." >/dev/null
+    fi
+    if ! reveal_program "$installed_program"; then
+        show_notice "Your LumiPaint plugins are installed, but Finder could not show the keyboard program.
+
+The file is saved here:
+$installed_program
+
+Open that location when you are ready to load the program in ROLI Dashboard." >/dev/null
+    fi
+}
+
+# Allow the handoff regression test to exercise the UI decisions with substitutes
+# for the dialogs and app-opening commands, without installing or opening apps.
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 library_dir="$HOME/Library"
 check_only=false
@@ -17,14 +73,6 @@ while (($#)); do
         *) echo "$for_arg_usage" >&2; exit 1 ;;
     esac
 done
-
-show_dialog() {
-    /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT'
-on run argv
-    display dialog (item 1 of argv) with title "LumiPaint Setup" buttons {"Cancel", item 2 of argv} default button 2
-end run
-APPLESCRIPT
-}
 
 fail() { echo "LumiPaint setup: $*" >&2; exit 1; }
 [[ $(uname -s) == Darwin ]] || fail "This installer requires macOS."
@@ -59,7 +107,7 @@ Save your work and quit Ableton Live and other DAWs first.
 
 Setup will install VST3 and CLAP for your user account, keep a copy of the Littlefoot program, and back up any previous installation. No administrator password is needed.
 
-Step 2 will open ROLI Dashboard for the keyboard program upload." "Install" >/dev/null || exit 0
+After installation, you can open ROLI Dashboard to set up the keyboard or finish without that step." "Install" >/dev/null || exit 0
 fi
 
 support_dir="$library_dir/Application Support/LumiPaint"
@@ -119,18 +167,5 @@ echo "Keyboard upload is still pending."
 
 if $install_only; then exit 0; fi
 
-show_dialog "Step 1 complete. Step 2: Load the keyboard program.
-
-Connect LUMI by USB. Dashboard must show firmware 1.3.0 or later.
-
-Setup will open Dashboard and select lumi_paint.littlefoot in Finder. Drag that file onto the picture of your LUMI in Dashboard. A dim rainbow is the expected result.
-
-This replaces the keyboard's current program. The repository documents Dashboard's factory reset as the way to restore ROLI's program.
-
-The file has only been copied to your Mac so far; setup cannot verify an upload." "Open Dashboard" >/dev/null || exit 0
-
-if ! /usr/bin/open -b com.roli.rolidashboard; then
-    echo "Install ROLI Dashboard through ROLI Connect, then drag in the selected Littlefoot file." >&2
-fi
-/usr/bin/open -R "${destinations[2]}"
+dashboard_handoff "${destinations[2]}"
 echo "After the Dashboard upload, reopen Live, rescan VST3 plugins and select the LUMI USB port in LumiPaint."

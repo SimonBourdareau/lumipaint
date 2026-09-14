@@ -66,6 +66,9 @@ Privacy & Security > Open Anyway**, following [Apple's instructions](https://sup
 The plugin may also need approval before rescanning it in Live. You can cancel
 the Dashboard step after the plugins are installed to test loading without
 replacing the keyboard program.
+If Dashboard cannot open, setup displays instructions for installing it through
+ROLI Connect and confirms that plugin installation has completed. A keyboard
+that already has the LumiPaint program does not need another upload.
 
 For a preflight without installation, use `./install-macos.command --check`.
 `--install-only` skips the dialogs and Dashboard handoff; close DAWs before using

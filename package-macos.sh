@@ -24,7 +24,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>Install LumiPaint</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
@@ -62,6 +62,9 @@ attempt to open it, then check System Settings > Privacy & Security for
 Open Anyway. See https://support.apple.com/102445 for Apple's instructions.
 The plugin itself may also need approval before rescanning it in Live.
 You can cancel the Dashboard step after installation to test plugin loading.
+If Dashboard cannot open, setup confirms that the plugins are installed and
+explains how to install Dashboard through ROLI Connect. An already configured
+keyboard does not need another program upload.
 
 Loading Littlefoot in Dashboard is the device-program replacement step.
 It requires the manual drag; this installer cannot upload or verify it.
