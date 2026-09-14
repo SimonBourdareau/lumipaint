@@ -41,7 +41,9 @@ would need changing and how to find out in one flash.
 
 ## Setting it up
 
-**macOS:** unzip the Mac package and double-click **Install LumiPaint.app**.
+**macOS:** the [latest release](../../releases/latest) has both plugin
+formats built for macOS (Contribution from **Lluis Gerard**) and the device program, so nothing needs compiling.
+unzip the Mac package and double-click **Install LumiPaint.app**.
 The app runs setup directly without opening Terminal or loading your interactive
 shell configuration. It contains all payloads, so moving the app does not break
 installation. From a source checkout, build into `build-macos` first using the
