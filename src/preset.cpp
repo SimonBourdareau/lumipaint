@@ -36,6 +36,10 @@
  #include <shlobj.h>
  #undef far
  #undef near
+#else
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include <unistd.h>
 #endif
 
 namespace lumipaint {
@@ -96,15 +100,23 @@ std::string runDialog (bool saving)
 
 #endif
 
+}
+
 #if defined (__APPLE__)
 
-/* Declared here and implemented in preset_macos.mm, so this file stays plain C++ and
-   only the part that must be Objective-C is. */
+/*
+    Implemented in preset_macos.mm, so this file stays plain C++ and only the part that
+    must be Objective-C is.
+
+    Declared after the anonymous namespace closes, which is not where it used to sit. An
+    anonymous namespace gives internal linkage, so the declaration could never resolve
+    against the definition in the .mm - the macOS build compiled both files and then
+    failed at the link with an undefined symbol, which is not where anyone looks for a
+    file-dialog problem.
+*/
 std::string macDialog (bool saving);
 
 #endif
-
-}
 
 const char *PresetIO::lastError()
 {
@@ -132,7 +144,15 @@ std::string PresetIO::defaultDirectory()
     if (home == nullptr)
         return std::string();
 
-    return std::string (home) + "/Documents/LumiPaint";
+    /*
+        Created if it is not there, which the Windows branch has always done and this
+        one did not. A save panel pointed at a directory that does not exist is ignored
+        and opens wherever the system last was, so the first save of a fresh install
+        landed somewhere arbitrary while the panel gave no hint why.
+    */
+    const std::string path = std::string (home) + "/Documents/LumiPaint";
+    mkdir (path.c_str(), 0755);
+    return path;
 #endif
 }
 

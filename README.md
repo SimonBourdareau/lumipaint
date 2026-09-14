@@ -64,11 +64,8 @@ a copy that missed the nested file leaves a bundle that looks right and cannot l
 
 Rescan plugins in your host afterwards.
 
-Then follow **step 0** and **step 1** below — the keyboard has to be flashed before any of
-this does anything — **skip step 2**, which is building from source, and go on to
-**steps 3 and 4**.
-
-### Building it yourself
+Then follow the steps below. **Step 2** is building from source and is the only one you
+can skip; the keyboard still has to be flashed before any of this does anything.
 
 **0. Check the firmware.** The keyboard needs **1.3.0 or later** for Dashboard to accept
 a Littlefoot program at all. Dashboard shows the current version and updates it. On
@@ -82,9 +79,11 @@ hold the port at the same time.
 You should see a dim rainbow across the keys straight away. That is the program's default
 map, and it means the flash worked.
 
+### Building it yourself
+
 **2. Build the plugin.**
 
-### Windows
+#### Windows
 
 **This is the tested path.** It uses MSYS2, which provides the compiler and the shell.
 
@@ -125,19 +124,19 @@ VST3 SDK and needs a network, and takes a few minutes.
 
 ```sh
 cp LumiPaint.clap "$LOCALAPPDATA/Programs/Common/CLAP/"
-cp -r build-vst3/Release/LumiPaint.vst3 "/c/Program Files/Common Files/VST3/"
+cp -r build-vst3/Release/LumiPaint.vst3 "$LOCALAPPDATA/Programs/Common/VST3/"
 ```
 
-The VST3 is a folder rather than a file, hence `-r`, and that destination usually needs
-an elevated shell.
+The VST3 is a folder rather than a file, hence `-r`. That is the same per-user location
+`install-windows.bat` writes to, so neither path needs an elevated shell.
 
 **Keep the project path free of spaces.** The wrapper build does not handle them and the
 script refuses early rather than failing obscurely later.
 
-### macOS and Linux
+#### macOS and Linux
 
 Both use CMake, and both are untested — the code compiles and links, but has never been
-run against a real host or a real keyboard.
+run against a real host or a real keyboard. See *Known limitations* for what that covers.
 
 macOS:
 
@@ -169,6 +168,8 @@ Add `-DLUMIPAINT_BUILD_VST3=ON` to either for a VST3, and on macOS an AU as well
 come from [clap-wrapper](https://github.com/free-audio/clap-wrapper), which turns the
 finished CLAP into the other formats — so one set of sources serves all of them and a
 fix cannot land in one and miss another.
+
+### In your DAW
 
 **3. Load LumiPaint on a track**, before the instrument. It is a note effect: notes pass through
 untouched, and sitting ahead of the instrument is what lets the capture feature play a
@@ -274,8 +275,8 @@ Little use on a plugin that draws a plain piano: there is nothing to copy.
 | --- | --- |
 | `Find windows` | List what is open. |
 | `Read keyboard` | Capture the chosen window and find its keybed. The status line reports keys, octaves, and pixels per white key. |
-| `Find anchor` | Play a note into the plugin and watch which key changes — that key is that note, and the anchor follows. Needs the plugin to show played notes on its keybed. |
-| `Lowest C is` | Which MIDI note the leftmost detected C is. Set by `Find anchor`, or by hand. |
+| `Find anchor` | Plays note 60 (C3) into the plugin and watches which key changes — that key is that note, and the anchor follows. Needs the plugin to show played notes on its keybed, and LumiPaint to sit ahead of it on the track. |
+| `Lowest C is` | Which MIDI note the leftmost detected C is. Set by `Find anchor`, or by hand. Moving it re-places the captured colours straight away and clears the span they were at, whether `Live` is on or not. |
 | `Import colours` | Write what was read into the colour table. |
 | `Live` | Keep re-reading those keys and pushing the colours, about five times a second. Detection is not repeated, so this is one capture and a few hundred pixel reads. It keeps running with the LumiPaint window closed, and if the plugin being followed is closed and reopened it finds the window again by title. |
 
@@ -336,6 +337,10 @@ sensitivity curves, fixed velocity, pitch bend range, tracking modes and brightn
 | `Octave` | Shifts notes and lights together. Follows the hardware buttons. |
 | `Display offset` | Shifts what the lights show without moving the notes, for when something upstream transposes but the keyboard does not know. |
 | `Fold octaves` | A lit note lights every key of its pitch class, so notes outside the visible window still show. |
+
+Note names follow one convention throughout: note 0 is C-2, note 60 is C3, note 127 is
+G8. It is not a setting. A setting for this can only ever be set wrong, and being wrong
+looks exactly like the anchor being wrong.
 
 ---
 
@@ -489,8 +494,15 @@ whichever block can reach the host relays them.
 
 `src/imgui_host.h` is the window and OpenGL contract: create, destroy, set parent, set
 size, set scale, show, hide, plus a render callback the layer invokes when it wants a
-frame. `src/imgui_host_win32.cpp` implements it for Windows. A macOS or Linux build needs
-its own, pointed at by `LUMIPAINT_HOST_SOURCES`.
+frame. There is an implementation per platform — `imgui_host_win32.cpp`,
+`imgui_host_macos.mm` and `imgui_host_x11.cpp` — and `LUMIPAINT_HOST_SOURCES` picks one.
+Anything else would need a fourth.
+
+The three are deliberately written to read side by side, because the awkward parts are
+the same everywhere and only the spelling changes: not drawing a frame while a frame is
+already open, which every platform reaches through some modal loop of its own; not taking
+the keyboard from the host unless a text field is being edited; and starting to paint on
+parent as well as on show, since a host that attaches the view itself never calls show.
 
 Repaint is driven by the host layer's own timer rather than the CLAP timer extension: a
 host that does not provide one would leave the window created and never painted.

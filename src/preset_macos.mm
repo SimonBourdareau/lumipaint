@@ -19,66 +19,86 @@
     The macOS half of the preset dialogs.
 
     Split out so preset.cpp stays plain C++ and only the part that has to be
-    Objective-C is. Written but not run - there is no Mac here to test on.
+    Objective-C is. Compiles and links, but has never been run - there is no Mac here
+    to test on.
+
+    What this used to do instead: it declared a defaultDir() it never defined, and
+    called a PresetIO_defaultDirectory() that exists in no translation unit. Both were
+    invented names for PresetIO::defaultDirectory(), which is right there in preset.h
+    and is what the Windows and Linux dialogs already call.
 */
 
 #import <Cocoa/Cocoa.h>
 
+#include "preset.h"
+
 #include <string>
 
 namespace lumipaint {
-namespace {
 
-std::string defaultDir();
+/*
+    Run modally, on the main thread.
 
-}
-
-std::string PresetIO_defaultDirectory();
-
-namespace {
-
-std::string macDialogImpl (bool saving)
+    A panel run from the audio thread or from a worker does not merely misbehave - AppKit
+    requires the main thread for this, and the failure is a hang rather than a message.
+    The editor calls it from its own draw, which is the main thread, so this is a
+    precondition rather than something to work around; the check is here so a future
+    caller gets an empty string rather than a locked host.
+*/
+std::string macDialog (bool saving)
 {
+    if (! [NSThread isMainThread])
+        return std::string();
+
     @autoreleasepool
     {
-        NSString *dir = [NSString stringWithUTF8String:
-                            PresetIO_defaultDirectory().c_str()];
+        const std::string dir = PresetIO::defaultDirectory();
+        NSURL *start = nil;
+
+        if (! dir.empty())
+        {
+            NSString *path = [NSString stringWithUTF8String: dir.c_str()];
+
+            if (path.length > 0)
+                start = [NSURL fileURLWithPath: path isDirectory: YES];
+        }
 
         if (saving)
         {
             NSSavePanel *panel = [NSSavePanel savePanel];
-            [panel setAllowedFileTypes: @[@"lumimap"]];
             [panel setNameFieldStringValue: @"map.lumimap"];
+            [panel setAllowedFileTypes: @[@"lumimap"]];
 
-            if (dir.length > 0)
-                [panel setDirectoryURL: [NSURL fileURLWithPath: dir]];
+            if (start != nil)
+                [panel setDirectoryURL: start];
 
-            if ([panel runModal] != NSModalResponseOK)
+            if ([panel runModal] != NSModalResponseOK || [panel URL] == nil)
                 return std::string();
 
-            return std::string ([[[panel URL] path] UTF8String]);
+            const char *chosen = [[[panel URL] path] UTF8String];
+            return chosen != nullptr ? std::string (chosen) : std::string();
         }
 
         NSOpenPanel *panel = [NSOpenPanel openPanel];
         [panel setAllowedFileTypes: @[@"lumimap"]];
         [panel setAllowsMultipleSelection: NO];
         [panel setCanChooseDirectories: NO];
+        [panel setCanChooseFiles: YES];
 
-        if (dir.length > 0)
-            [panel setDirectoryURL: [NSURL fileURLWithPath: dir]];
+        if (start != nil)
+            [panel setDirectoryURL: start];
 
         if ([panel runModal] != NSModalResponseOK)
             return std::string();
 
-        return std::string ([[[[panel URLs] firstObject] path] UTF8String]);
+        NSURL *picked = [[panel URLs] firstObject];
+
+        if (picked == nil)
+            return std::string();
+
+        const char *chosen = [[picked path] UTF8String];
+        return chosen != nullptr ? std::string (chosen) : std::string();
     }
-}
-
-}
-
-std::string macDialog (bool saving)
-{
-    return macDialogImpl (saving);
 }
 
 }
