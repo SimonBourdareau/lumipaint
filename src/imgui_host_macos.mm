@@ -18,9 +18,9 @@
 /*
     The macOS side of imgui_host.h.
 
-    Compiles and links, but has never been run: there is no Mac here to test on. The
-    structure mirrors imgui_host_win32.cpp closely enough that the two can be read side
-    by side, and every place where the platform forces a different answer is marked.
+    The structure mirrors imgui_host_win32.cpp. Mac testing in Live exposed the
+    Cocoa backend's context and observer lifetime bugs; the build-local backend
+    patch and tests/macos_focus_test.mm cover the background-app crash.
 
     Build:
         cmake -B build -DLUMIPAINT_HOST_SOURCES=src/imgui_host_macos.mm
@@ -55,11 +55,12 @@
 #include "backends/imgui_impl_osx.h"
 
 @class LumiPaintWindowDelegate;
+@class LumiPaintView;
 
 struct ImGuiHostWindow
 {
     NSWindow *window;
-    NSOpenGLView *view;
+    LumiPaintView *view;
     NSTimer *timer;
 
     /*
@@ -341,9 +342,8 @@ ImGuiHostWindow *imguiHostCreate (uint32_t width, uint32_t height, bool floating
     [[view openGLContext] makeCurrentContext];
 
     IMGUI_CHECKVERSION();
-    c->imgui = ImGui::CreateContext();
-
     ImGuiContext *previous = ImGui::GetCurrentContext();
+    c->imgui = ImGui::CreateContext();
     ImGui::SetCurrentContext (c->imgui);
     ImGui::GetIO().IniFilename = nullptr;
 
@@ -386,12 +386,15 @@ void imguiHostDestroy (ImGuiHostWindow *c)
 
     if (c->imgui != nullptr)
     {
+        ImGuiContext *previous = ImGui::GetCurrentContext();
+        if (previous == c->imgui)
+            previous = nullptr;
         ImGui::SetCurrentContext (c->imgui);
         [[c->view openGLContext] makeCurrentContext];
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplOSX_Shutdown();
         ImGui::DestroyContext (c->imgui);
-        ImGui::SetCurrentContext (nullptr);
+        ImGui::SetCurrentContext (previous);
         c->imgui = nullptr;
     }
 

@@ -41,7 +41,44 @@ would need changing and how to find out in one flash.
 
 ## Setting it up
 
-The quickest way in is the [latest release](../../releases/latest), which has both plugin
+**macOS:** unzip the Mac package and double-click **Install LumiPaint.app**.
+The app runs setup directly without opening Terminal or loading your interactive
+shell configuration. It contains all payloads, so moving the app does not break
+installation. From a source checkout, build into `build-macos` first using the
+commands below, then run `./package-macos.sh` to create the app.
+The installer validates the signed bundles, installs VST3 and CLAP into your
+user Library, and backs up any previous installation. It keeps the device file at
+`~/Library/Application Support/LumiPaint/lumi_paint.littlefoot`.
+
+Setup then opens ROLI Dashboard and reveals that file in Finder. **Drag the file
+onto the keyboard's picture in Dashboard to load the onboard program.** This
+manual device step is still required: neither the Mac nor Windows installer uploads
+Littlefoot automatically. Opening Dashboard or copying the file is not proof that
+the device has loaded it. Expect a dim rainbow after the upload.
+
+To assemble a Mac download after building, run `./package-macos.sh`. It creates a
+folder and ZIP under `release/`, including the installer, both plugins, Littlefoot,
+license and setup instructions. These are locally signed development builds;
+they are not notarized for public distribution.
+
+If macOS blocks the download, attempt to open it, then check **System Settings >
+Privacy & Security > Open Anyway**, following [Apple's instructions](https://support.apple.com/102445).
+The plugin may also need approval before rescanning it in Live. You can cancel
+the Dashboard step after the plugins are installed to test loading without
+replacing the keyboard program.
+If Dashboard cannot open, setup displays instructions for installing it through
+ROLI Connect and confirms that plugin installation has completed. A keyboard
+that already has the LumiPaint program does not need another upload.
+
+For a preflight without installation, use `./install-macos.command --check`.
+`--install-only` skips the dialogs and Dashboard handoff; close DAWs before using
+it. The installer tests (`bash tests/macos_installer_test.sh`) use temporary
+Library folders and never access the keyboard.
+To test the packaged app, run `bash tests/macos_launcher_test.sh "/path/to/Install LumiPaint.app"`.
+This checks a relocated app, paths containing spaces and apostrophes, installation
+to a temporary Library, and independence from Bash startup hooks.
+
+**Windows:** the [latest release](../../releases/latest) has both plugin
 formats built for Windows and the device program, so nothing needs compiling.
 
 Unzip the whole thing into a folder and double-click **`install-windows.bat`**. It copies
@@ -135,8 +172,11 @@ script refuses early rather than failing obscurely later.
 
 #### macOS and Linux
 
-Both use CMake, and both are untested — the code compiles and links, but has never been
-run against a real host or a real keyboard. See *Known limitations* for what that covers.
+Both use CMake. The Apple silicon CLAP and VST3 builds have been compiled. The
+VST3 passes instance initialization, stereo bus negotiation, MIDI port and bundle
+signature checks. Loading the editor and switching desktops/background apps have
+also been tested in Ableton Live 12.4.5 on Apple silicon with macOS 26.5.2. Hardware
+lighting, full MIDI routing and screen capture remain unverified. Linux remains untested.
 
 macOS:
 
@@ -149,6 +189,58 @@ cp -r build/LumiPaint.clap ~/Library/Audio/Plug-Ins/CLAP/
 `LUMIPAINT_HOST_SOURCES` no longer needs spelling out — each platform has one sensible
 answer and CMake picks it. The result is a bundle, not a file, hence `cp -r`. Universal
 by default; `-DCMAKE_OSX_ARCHITECTURES=arm64` builds for Apple silicon alone.
+
+For **Ableton Live on Apple silicon**, build the VST3. On a fresh checkout, fetch
+the three dependencies first (skip any already present):
+
+```sh
+git clone --depth 1 https://github.com/free-audio/clap.git clap-src
+git clone --depth 1 -b v1.91.5 https://github.com/ocornut/imgui.git imgui
+git clone --depth 1 -b 6.0.0 https://github.com/thestk/rtmidi.git rtmidi
+cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DLUMIPAINT_BUILD_VST3=ON -DLUMIPAINT_BUILD_AU=OFF
+cmake --build build-macos --parallel 6
+mkdir -p ~/Library/Audio/Plug-Ins/VST3
+cp -R build-macos/LumiPaint.vst3 ~/Library/Audio/Plug-Ins/VST3/
+```
+
+The first configuration also downloads the wrapper and VST3 SDK. The VST3 embeds
+its own CLAP bundle, so Live needs only `LumiPaint.vst3` installed. This build is
+for native Apple silicon Live; use `x86_64` for Intel or `"arm64;x86_64"` for a
+universal build. Those other architectures have not been verified here.
+
+Enable VST3 system folders in Live's plug-in settings and rescan. To pass notes
+through LumiPaint to an instrument, put LumiPaint on one MIDI track and the
+instrument on another. On the instrument track, select the LumiPaint track under
+**MIDI From**, select LumiPaint in the lower chooser, and set **Monitor: In**.
+This follows [Ableton's VST MIDI-output routing instructions](https://help.ableton.com/hc/en-us/articles/209070189-Accessing-the-MIDI-output-of-a-VST-plug-in);
+The full MIDI routing setup still needs verification in Live.
+
+LumiPaint exposes a silent stereo output for compatibility with Live's instrument
+hosting. Sound comes from the instrument on the receiving track. Earlier macOS
+builds exposed no audio ports: Live 12.4.5 scanned them successfully but refused
+to load them with "No valid output bus could be found" in its log. If you installed
+that build, quit Live, replace the VST3 with the rebuilt bundle and rescan.
+
+After building, run `sh tests/run-macos-tests.sh` to check VST3 initialization and
+bus negotiation, both MIDI ports, silent float/double output buffers and signing.
+The tests do not activate the plugin's MIDI worker or send anything to hardware.
+
+The Mac regression suite also checks app focus changes with multiple editors,
+text input and notifications after editor destruction. A Live 12.4.5 crash
+was traced to `ImGuiIO::AddFocusEvent(false)` when Live moved into the
+background. ImGui 1.91.5's Cocoa callbacks used the current global context and
+left observers registered after shutdown. CMake now applies the tracked
+`cmake/imgui-osx-context.patch` to a build-local backend copy to bind callbacks
+to their editor and clean up observers. The original backend reproduces the
+null-context crash; the patched backend passes the regression. After installing
+the fix, the tester also reported using other apps and switching desktops before
+returning to Live without another crash.
+
+Choose the LUMI USB port in LumiPaint's editor. The lighting connection is direct
+from the plugin to the keyboard. Lighting requires the Littlefoot program from
+step 1; building or installing the plugin does not load that program onto the device.
 
 Linux:
 
@@ -557,9 +649,13 @@ If you have a larger piano and try this, the result is welcome.
   very dark GUI can lose a few keys at the ends. Relaxing it costs accuracy elsewhere.
 - Firmware 1.3.0 or later is required. Earlier versions have no way to accept a
   Littlefoot program, so nothing here can work on them.
-- Only Windows is tested. macOS and Linux compile and link, and everything except the
-  window layer, the screen capture and the file dialogs is shared code that is exercised
-  on Windows daily — but neither has been run against a real host or a real keyboard.
+- Windows has been tested with a host and keyboard. macOS and Linux share
+  the core code exercised on Windows, with platform-specific window, capture and
+  dialog implementations. Apple silicon CLAP/VST3 compilation, bundle metadata and
+  VST3 instance initialization and bus negotiation have been checked. Editor loading
+  and desktop/background switching have been tested in Live 12.4.5 on macOS 26.5.2.
+  Hardware lighting, full MIDI routing and screen capture remain unverified, as do
+  the AU, Intel and universal builds. Windows/Linux were not retested for these changes.
 - The plugin reads the keyboard's own input port directly. On Windows that used to mean
   competing with the host for an exclusive port; Windows MIDI Services makes MIDI 1.0
   ports multi-client, so on Windows 11 with it installed both can hold the port at once.

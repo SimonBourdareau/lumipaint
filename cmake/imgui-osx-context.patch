@@ -1,0 +1,128 @@
+--- imgui_impl_osx.mm
++++ imgui_impl_osx.mm
+@@ -72,6 +72,16 @@
+ #define APPLE_HAS_CONTROLLER     (__IPHONE_OS_VERSION_MIN_REQUIRED >= 140000 || __MAC_OS_X_VERSION_MIN_REQUIRED >= 110000 || __TV_OS_VERSION_MIN_REQUIRED >= 140000)
+ #define APPLE_HAS_THUMBSTICKS    (__IPHONE_OS_VERSION_MIN_REQUIRED >= 120100 || __MAC_OS_X_VERSION_MIN_REQUIRED >= 101401 || __TV_OS_VERSION_MIN_REQUIRED >= 120100)
+ 
++// Cocoa callbacks can arrive between frames, when another editor (or no editor)
++// owns the current context. Always restore the caller's context on return.
++struct ImGui_ImplOSX_ContextScope
++{
++    ImGuiContext* previous;
++    explicit ImGui_ImplOSX_ContextScope(ImGuiContext* context)
++        : previous(ImGui::GetCurrentContext()) { ImGui::SetCurrentContext(context); }
++    ~ImGui_ImplOSX_ContextScope() { ImGui::SetCurrentContext(previous); }
++};
++
+ @class ImGuiObserver;
+ @class KeyEventResponder;
+ 
+@@ -120,6 +130,7 @@
+   https://github.com/glfw/glfw/blob/b55a517ae0c7b5127dffa79a64f5406021bf9076/src/cocoa_window.m#L722-L723
+  */
+ @interface KeyEventResponder: NSView<NSTextInputClient>
++@property(nonatomic, assign) ImGuiContext* context;
+ @end
+ 
+ @implementation KeyEventResponder
+@@ -155,6 +166,8 @@
+ 
+ - (void)keyDown:(NSEvent*)event
+ {
++    if (!self.context) return;
++    ImGui_ImplOSX_ContextScope scope(self.context);
+     if (!ImGui_ImplOSX_HandleEvent(event, self))
+         [super keyDown:event];
+ 
+@@ -164,12 +177,16 @@
+ 
+ - (void)keyUp:(NSEvent*)event
+ {
++    if (!self.context) return;
++    ImGui_ImplOSX_ContextScope scope(self.context);
+     if (!ImGui_ImplOSX_HandleEvent(event, self))
+         [super keyUp:event];
+ }
+ 
+ - (void)insertText:(id)aString replacementRange:(NSRange)replacementRange
+ {
++    if (!self.context) return;
++    ImGui_ImplOSX_ContextScope scope(self.context);
+     ImGuiIO& io = ImGui::GetIO();
+ 
+     NSString* characters;
+@@ -236,6 +253,7 @@
+ @end
+ 
+ @interface ImGuiObserver : NSObject
++@property(nonatomic, assign) ImGuiContext* context;
+ 
+ - (void)onApplicationBecomeActive:(NSNotification*)aNotification;
+ - (void)onApplicationBecomeInactive:(NSNotification*)aNotification;
+@@ -246,12 +264,16 @@
+ 
+ - (void)onApplicationBecomeActive:(NSNotification*)aNotification
+ {
++    if (!self.context) return;
++    ImGui_ImplOSX_ContextScope scope(self.context);
+     ImGuiIO& io = ImGui::GetIO();
+     io.AddFocusEvent(true);
+ }
+ 
+ - (void)onApplicationBecomeInactive:(NSNotification*)aNotification
+ {
++    if (!self.context) return;
++    ImGui_ImplOSX_ContextScope scope(self.context);
+     ImGuiIO& io = ImGui::GetIO();
+     io.AddFocusEvent(false);
+ }
+@@ -412,6 +434,7 @@
+     //io.BackendFlags |= ImGuiBackendFlags_HasSetMousePos;          // We can honor io.WantSetMousePos requests (optional, rarely used)
+ 
+     bd->Observer = [ImGuiObserver new];
++    bd->Observer.context = ImGui::GetCurrentContext();
+     bd->Window = view.window ?: NSApp.orderedWindows.firstObject;
+     ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+     main_viewport->PlatformHandle = main_viewport->PlatformHandleRaw = (__bridge_retained void*)bd->Window;
+@@ -469,6 +492,7 @@
+     // Add the NSTextInputClient to the view hierarchy,
+     // to receive keyboard events and translate them to input text.
+     bd->KeyEventResponder = [[KeyEventResponder alloc] initWithFrame:NSZeroRect];
++    bd->KeyEventResponder.context = ImGui::GetCurrentContext();
+     bd->InputContext = [[NSTextInputContext alloc] initWithClient:bd->KeyEventResponder];
+     [view addSubview:bd->KeyEventResponder];
+     ImGui_ImplOSX_AddTrackingArea(view);
+@@ -497,7 +521,19 @@
+     ImGui_ImplOSX_Data* bd = ImGui_ImplOSX_GetBackendData();
+     IM_ASSERT(bd != nullptr && "No platform backend to shutdown, or already shutdown?");
+ 
++    [[NSNotificationCenter defaultCenter] removeObserver:bd->Observer];
++    bd->Observer.context = nullptr;
++    bd->KeyEventResponder.context = nullptr;
++    [bd->InputContext deactivate];
++    [bd->KeyEventResponder removeFromSuperview];
++#if !__has_feature(objc_arc)
++    [bd->Observer release];
++    [bd->InputContext release];
++    [bd->KeyEventResponder release];
++#endif
+     bd->Observer = nullptr;
++    bd->InputContext = nullptr;
++    bd->KeyEventResponder = nullptr;
+     if (bd->Monitor != nullptr)
+     {
+         [NSEvent removeMonitor:bd->Monitor];
+@@ -813,9 +849,13 @@
+     eventMask |= NSEventMaskRightMouseDown | NSEventMaskRightMouseUp | NSEventMaskRightMouseDragged;
+     eventMask |= NSEventMaskOtherMouseDown | NSEventMaskOtherMouseUp | NSEventMaskOtherMouseDragged;
+     eventMask |= NSEventMaskKeyDown | NSEventMaskKeyUp | NSEventMaskFlagsChanged;
++    ImGuiContext* context = ImGui::GetCurrentContext();
+     bd->Monitor = [NSEvent addLocalMonitorForEventsMatchingMask:eventMask
+                                                         handler:^NSEvent* _Nullable(NSEvent* event)
+     {
++        if (view.window == nil || event.window != view.window || view.isHiddenOrHasHiddenAncestor)
++            return event;
++        ImGui_ImplOSX_ContextScope scope(context);
+         ImGui_ImplOSX_HandleEvent(event, view);
+         return event;
+     }];

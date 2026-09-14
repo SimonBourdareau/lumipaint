@@ -60,6 +60,23 @@ foreach(dep CLAP_DIR RTMIDI_DIR IMGUI_DIR)
             "Run build_gui.sh, which clones the dependencies, or pass -D${dep}=/path/to/it")
     endif()
 endforeach()
+
+# ImGui 1.91.5's Cocoa callbacks assume a permanently current context and its
+# non-ARC shutdown leaves notification observers registered. Apply our small
+# context/lifetime fix to a build-local copy, leaving the downloaded SDK intact.
+if(APPLE)
+    set(LUMIPAINT_OSX_BACKEND "${CMAKE_CURRENT_BINARY_DIR}/imgui-backend/imgui_impl_osx.mm")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/imgui-backend")
+    configure_file("${IMGUI_DIR}/backends/imgui_impl_osx.mm" "${LUMIPAINT_OSX_BACKEND}" COPYONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/imgui-osx-context.patch")
+    execute_process(COMMAND /usr/bin/patch --silent --fuzz=0
+        "${LUMIPAINT_OSX_BACKEND}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/imgui-osx-context.patch"
+        RESULT_VARIABLE osx_patch_result)
+    if(NOT osx_patch_result EQUAL 0)
+        message(FATAL_ERROR "Unable to apply the Cocoa context fix. Use ImGui v1.91.5.")
+    endif()
+endif()
 set(LUMIPAINT_HOST_SOURCES "" CACHE STRING "Sources implementing imgui_host.h")
 
 # Each platform has exactly one sensible answer, so pick it rather than making every
@@ -96,7 +113,7 @@ add_library(LumiPaint MODULE
     # link fails on every ImGui_Impl symbol the host layer calls.
     $<$<PLATFORM_ID:Windows>:${IMGUI_DIR}/backends/imgui_impl_win32.cpp>
     $<$<PLATFORM_ID:Windows>:${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp>
-    $<$<PLATFORM_ID:Darwin>:${IMGUI_DIR}/backends/imgui_impl_osx.mm>
+    $<$<PLATFORM_ID:Darwin>:${LUMIPAINT_OSX_BACKEND}>
     $<$<PLATFORM_ID:Darwin>:${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp>
     $<$<PLATFORM_ID:Linux>:${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp>
 
@@ -138,7 +155,8 @@ if(APPLE)
     # CoreGraphics for reading another application's window; OpenGL for the editor.
     target_link_libraries(LumiPaint PRIVATE
         "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation"
-        "-framework Cocoa" "-framework CoreGraphics" "-framework OpenGL")
+        "-framework Cocoa" "-framework CoreGraphics" "-framework OpenGL"
+        "-framework GameController")
 elseif(WIN32)
     target_compile_definitions(LumiPaint PRIVATE __WINDOWS_MM__)
 
@@ -203,6 +221,10 @@ if(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
         MACOSX_BUNDLE_COPYRIGHT "Copyright (C) 2026 Simon Bourdareau"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-bundle.plist.in")
+    add_custom_command(TARGET LumiPaint POST_BUILD
+        COMMAND /usr/bin/codesign --force --sign - --timestamp=none
+            "$<TARGET_BUNDLE_DIR:LumiPaint>"
+        VERBATIM)
 else()
     set_target_properties(LumiPaint PROPERTIES
         PREFIX ""
@@ -227,27 +249,66 @@ endif()
 # ==============================================================================
 
 option (LUMIPAINT_BUILD_VST3 "Also build a VST3 through clap-wrapper" OFF)
+option (LUMIPAINT_BUILD_AU "Also build an Audio Unit on macOS" ${LUMIPAINT_BUILD_VST3})
 
-if (LUMIPAINT_BUILD_VST3)
+if (LUMIPAINT_BUILD_VST3 OR (APPLE AND LUMIPAINT_BUILD_AU))
     include (FetchContent)
+    set(CLAP_SDK_ROOT "${CLAP_DIR}" CACHE PATH "CLAP SDK for the wrapper")
+    set(CLAP_WRAPPER_DOWNLOAD_DEPENDENCIES TRUE CACHE BOOL "Download wrapper SDKs")
 
     FetchContent_Declare (clap-wrapper
         GIT_REPOSITORY https://github.com/free-audio/clap-wrapper.git
-        GIT_TAG main)
+        GIT_TAG 1cca996e96f29ab2be7ae9f8cfe532bbc92e1dd6)
     FetchContent_MakeAvailable (clap-wrapper)
 
-    target_add_vst3_wrapper (TARGET LumiPaint
+    if(APPLE)
+        # Each wrapper is its own bundle and loads the CLAP embedded inside it.
+        # Applying both wrappers to LumiPaint itself overwrites its bundle format.
+        if(LUMIPAINT_BUILD_VST3)
+            add_library(LumiPaint_VST3 MODULE)
+            set_target_properties(LumiPaint_VST3 PROPERTIES
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+            add_dependencies(LumiPaint_VST3 LumiPaint)
+            # Repackage when the embedded plugin changes, even if the wrapper's
+            # own sources did not. A target dependency alone only orders builds.
+            set_property(TARGET LumiPaint_VST3 APPEND PROPERTY LINK_DEPENDS
+                "$<TARGET_FILE:LumiPaint>")
+            target_add_vst3_wrapper(TARGET LumiPaint_VST3
+                OUTPUT_NAME "LumiPaint"
+                BUNDLE_IDENTIFIER "com.lumipaint.vst3"
+                BUNDLE_VERSION "1.0.0"
+                SUPPORTS_ALL_NOTE_EXPRESSIONS TRUE
+                MACOS_EMBEDDED_CLAP_LOCATION "$<TARGET_BUNDLE_DIR:LumiPaint>")
+            add_custom_command(TARGET LumiPaint_VST3 POST_BUILD
+                COMMAND /usr/bin/codesign --force --sign - --timestamp=none
+                    "$<TARGET_BUNDLE_DIR:LumiPaint_VST3>"
+                VERBATIM)
+        endif()
+        if(LUMIPAINT_BUILD_AU)
+            add_library(LumiPaint_AU MODULE)
+            set_target_properties(LumiPaint_AU PROPERTIES
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+            add_dependencies(LumiPaint_AU LumiPaint)
+            set_property(TARGET LumiPaint_AU APPEND PROPERTY LINK_DEPENDS
+                "$<TARGET_FILE:LumiPaint>")
+            target_add_auv2_wrapper(TARGET LumiPaint_AU
+                OUTPUT_NAME "LumiPaint"
+                BUNDLE_IDENTIFIER "com.lumipaint.au"
+                BUNDLE_VERSION "1.0"
+                MANUFACTURER_NAME "LumiPaint"
+                MANUFACTURER_CODE "Lmpt"
+                SUBTYPE_CODE "Lmp1"
+                INSTRUMENT_TYPE "aumf"
+                PREFER_CMAKE_AUV2_CONFIGURATION TRUE
+                MACOS_EMBEDDED_CLAP_LOCATION "$<TARGET_BUNDLE_DIR:LumiPaint>")
+            add_custom_command(TARGET LumiPaint_AU POST_BUILD
+                COMMAND /usr/bin/codesign --force --sign - --timestamp=none
+                    "$<TARGET_BUNDLE_DIR:LumiPaint_AU>"
+                VERBATIM)
+        endif()
+    elseif(LUMIPAINT_BUILD_VST3)
+        target_add_vst3_wrapper (TARGET LumiPaint
                              OUTPUT_NAME "LumiPaint"
                              SUPPORTS_ALL_NOTE_EXPRESSIONS TRUE)
-
-    if (APPLE)
-        target_add_auv2_wrapper (TARGET LumiPaint
-                                 OUTPUT_NAME "LumiPaint"
-                                 BUNDLE_IDENTIFIER "com.lumipaint.au"
-                                 BUNDLE_VERSION "1.0"
-                                 MANUFACTURER_NAME "LumiPaint"
-                                 MANUFACTURER_CODE "Lmpt"
-                                 SUBTYPE_CODE "Lmp1"
-                                 INSTRUMENT_TYPE "aumf")
     endif()
 endif()
