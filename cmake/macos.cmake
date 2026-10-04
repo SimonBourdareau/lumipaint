@@ -17,12 +17,19 @@ endif()
 # --- Toolchain ----------------------------------------------------------------
 #
 #  Called before the target is defined, from the top of the main file.
+#
+#  enable_language(OBJCXX) is NOT here, deliberately.
+#
+#  It has to run at directory scope. Called from inside a function it looks like it
+#  worked - CMake reports "The OBJCXX compiler identification is AppleClang" and
+#  configure finishes - but the compile rules it defines stay in the function's scope,
+#  so generate then fails with "required internal CMake variable not set:
+#  CMAKE_OBJCXX_COMPILE_OBJECT", once per target that has a .mm in it. The message
+#  blames CMake's own installation, which is the last place worth looking.
+#
+#  The main CMakeLists calls it directly instead, next to the include of this file.
+#
 function(lumipaint_macos_toolchain)
-    # Objective-C++ has to be enabled before a .mm file can be compiled. Without it
-    # CMake knows .mm is OBJCXX, finds the language disabled, and quietly leaves every
-    # .mm out of the target - a link error listing symbols from four files, which reads
-    # like missing frameworks rather than a missing language.
-    enable_language(OBJCXX)
     set(CMAKE_OBJCXX_STANDARD 17 PARENT_SCOPE)
     set(CMAKE_OBJCXX_STANDARD_REQUIRED ON PARENT_SCOPE)
 

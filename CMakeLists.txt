@@ -24,6 +24,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos.cmake")
 
 if(APPLE)
+    # At directory scope, not inside the function below, and not optional. Every .mm in
+    # the project and in clap-wrapper needs it, and a function cannot give it to them:
+    # the language is detected either way, but the compile rules stay where they were
+    # defined and generate fails on every target that has a .mm in it.
+    enable_language(OBJCXX)
     lumipaint_macos_toolchain()
 endif()
 
