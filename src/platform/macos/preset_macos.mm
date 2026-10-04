@@ -31,6 +31,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "preset.h"
+#include "macos_bridge.h"
 
 #include <string>
 

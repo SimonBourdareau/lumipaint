@@ -346,6 +346,7 @@ LumiLink::LumiLink()
 
     wavesEnabled.store (0, std::memory_order_relaxed);
     wavesDelay.store (60, std::memory_order_relaxed);
+    wavesMode.store (0, std::memory_order_relaxed);
     idleMs.store (0, std::memory_order_relaxed);
     wavePhase = 0;
 
@@ -918,6 +919,19 @@ int LumiLink::getWavesDelay() const
     return wavesDelay.load (std::memory_order_relaxed);
 }
 
+void LumiLink::setWavesMode (int mode)
+{
+    if (mode < 0 || mode > 3)
+        mode = 0;
+
+    wavesMode.store (mode, std::memory_order_relaxed);
+}
+
+int LumiLink::getWavesMode() const
+{
+    return wavesMode.load (std::memory_order_relaxed);
+}
+
 bool LumiLink::wavesRunning() const
 {
     if (wavesEnabled.load (std::memory_order_relaxed) == 0)
@@ -1289,6 +1303,7 @@ void LumiLink::compositeColours()
     const uint32_t farTint = tensionFar.load (std::memory_order_relaxed);
     const int velocityOn = velocityEnabled.load (std::memory_order_relaxed);
     const bool wavesOn = wavesRunning();
+    const int wavesWhich = wavesMode.load (std::memory_order_relaxed);
     const int bendPathOn = bendPathEnabled.load (std::memory_order_relaxed);
     const uint32_t bendPathTint = bendPathColour.load (std::memory_order_relaxed);
 
@@ -1416,46 +1431,140 @@ void LumiLink::compositeColours()
         if (wavesOn)
         {
             /*
-                Two swells of different length and speed, so the pattern never settles
-                into an obvious repeat - one alone reads as a metronome.
+                Two of these replace the map and two keep it.
 
-                The phase is wrapped into range before use. It used to be taken modulo
-                360 after a subtraction, and C++ modulo keeps the sign of the left
-                operand: once the phase passed the note's offset the result went
-                negative, squaring turned that trough into a crest, and the channels ran
-                past their range. That is where the yellow came from, and why it only
-                appeared after the thing had been running a while.
+                Waves and aurora are fields: a colour computed from the note and the
+                phase, owing nothing to what was painted. Breathing and ember take the
+                painted colour and move only its brightness, so an idle keyboard still
+                says where the keyswitches are. That is the whole difference, and it is
+                why the painted base is read rather than discarded for the last two.
+
+                Every one of them is written to replace rather than blend, because a
+                screensaver over a colour map is neither, and every effect below still
+                paints over the result - which is what makes a note interrupt the idle
+                pattern visibly before the timer has even noticed.
             */
-            const int a = ((note * 24 + wavePhase / 22) % 360 + 360) % 360;
-            const int b = ((note * 13 - wavePhase / 37) % 360 + 360) % 360;
+            if (wavesWhich == 1)
+            {
+                /*
+                    Aurora: hue drifting along the keyboard, everything lit, nothing
+                    blinking.
 
-            const int ta = a < 180 ? a : 360 - a;
-            const int tb = b < 180 ? b : 360 - b;
+                    Three slow sines of different period beat against each other to
+                    place the hue, so the pattern never settles into a repeat the eye
+                    can follow - the same reason waves uses two rather than one. The
+                    hue is what moves; brightness stays high and nearly flat, which is
+                    what separates this from waves at a glance.
+                */
+                const int h = ((note * 9 + wavePhase / 29) % 360 + 360) % 360;
+                const int k = ((note * 4 - wavePhase / 53) % 360 + 360) % 360;
 
-            int level = ((ta + tb) / 2) * 255 / 180;
+                const int th = h < 180 ? h : 360 - h;
+                const int tk = k < 180 ? k : 360 - k;
 
-            if (level < 0)
-                level = 0;
+                const int hue = (th * 2 + tk) / 3;
+                const int band = hue * 6 / 180;
+                const int frac = (hue * 6 - band * 180) * 255 / 180;
 
-            if (level > 255)
-                level = 255;
+                int r = 0, g = 0, b = 0;
 
-            /* Curved toward the troughs, so most of the keyboard is dark sea. */
-            level = (level * level) / 255;
+                /*
+                    Green through blue through violet only.
 
-            /*
-                Blue only, with green joining late for the pale crest.
+                    The full hue circle would bring the keyboard round to red and amber,
+                    which reads as a fault rather than an aurora - the same reason the
+                    waves ramp has no red in it at all.
+                */
+                if (band <= 1)      { r = 0;          g = 200;        b = 40 + frac * 2 / 3; }
+                else if (band <= 3) { r = frac / 6;   g = 200 - frac / 2; b = 215; }
+                else                { r = 40 + frac / 3; g = 40;      b = 215 - frac / 4; }
 
-                Red is never used. It existed to whiten the very top, and the moment
-                anything went out of range it combined with green into yellow - which is
-                the one colour a sea should not be. Without it the crest reaches a bright
-                cyan-white instead, and nothing in the ramp can produce a warm colour at
-                all, however the arithmetic behaves.
-            */
-            const int blue = 30 + (level * 225) / 255;
-            const int green = level < 140 ? 0 : ((level - 140) * 235) / 115;
+                const int lift = 190 + (tk * 65) / 180;
 
-            result = ((uint32_t) green << 8) | (uint32_t) blue;
+                r = r * lift / 255;
+                g = g * lift / 255;
+                b = b * lift / 255;
+
+                result = ((uint32_t) (r & 0xff) << 16)
+                       | ((uint32_t) (g & 0xff) << 8)
+                       |  (uint32_t) (b & 0xff);
+            }
+            else if (wavesWhich == 2 || wavesWhich == 3)
+            {
+                /*
+                    Breathing, and ember.
+
+                    Breathing swells the whole map together. Ember is the same swell
+                    with a per-note phase offset, so the map shimmers rather than
+                    pulsing as one slab - one constant apart, which is why they share
+                    this branch rather than being written twice.
+
+                    A floor under the dim end, because a map that goes fully dark and
+                    comes back reads as the plugin dropping out. It never quite leaves.
+                */
+                const int spread = wavesWhich == 3 ? note * 17 : 0;
+                const int phase = ((spread + wavePhase / 26) % 360 + 360) % 360;
+                const int tri = phase < 180 ? phase : 360 - phase;
+
+                int level = 60 + (tri * 195) / 180;
+
+                if (level < 0)
+                    level = 0;
+
+                if (level > 255)
+                    level = 255;
+
+                const uint32_t src = base;
+                const int r = (int) ((src >> 16) & 0xffu) * level / 255;
+                const int g = (int) ((src >> 8) & 0xffu) * level / 255;
+                const int b = (int) (src & 0xffu) * level / 255;
+
+                result = ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
+            }
+            else
+            {
+                /*
+                    Two swells of different length and speed, so the pattern never
+                    settles into an obvious repeat - one alone reads as a metronome.
+
+                    The phase is wrapped into range before use. It used to be taken
+                    modulo 360 after a subtraction, and C++ modulo keeps the sign of the
+                    left operand: once the phase passed the note's offset the result went
+                    negative, squaring turned that trough into a crest, and the channels
+                    ran past their range. That is where the yellow came from, and why it
+                    only appeared after the thing had been running a while.
+                */
+                const int a = ((note * 24 + wavePhase / 22) % 360 + 360) % 360;
+                const int b = ((note * 13 - wavePhase / 37) % 360 + 360) % 360;
+
+                const int ta = a < 180 ? a : 360 - a;
+                const int tb = b < 180 ? b : 360 - b;
+
+                int level = ((ta + tb) / 2) * 255 / 180;
+
+                if (level < 0)
+                    level = 0;
+
+                if (level > 255)
+                    level = 255;
+
+                /* Curved toward the troughs, so most of the keyboard is dark sea. */
+                level = (level * level) / 255;
+
+                /*
+                    Blue only, with green joining late for the pale crest.
+
+                    Red is never used. It existed to whiten the very top, and the moment
+                    anything went out of range it combined with green into yellow - which
+                    is the one colour a sea should not be. Without it the crest reaches a
+                    bright cyan-white instead, and nothing in the ramp can produce a warm
+                    colour at all, however the arithmetic behaves.
+                */
+                const int blue = 30 + (level * 225) / 255;
+                const int green = level < 140 ? 0 : ((level - 140) * 235) / 115;
+
+                result = ((uint32_t) green << 8) | (uint32_t) blue;
+            }
         }
 
         /* Tension sits below the degree map: one says which scale note this is, the
@@ -3962,12 +4071,32 @@ bool stateSave (const clap_plugin_t *plugin, const clap_ostream_t *stream)
                                                 + self->link.getTensionAlpha()),
                                     self->link.getTensionHome(),
                                     self->link.getTensionFar(),
-                                    (uint32_t) ((self->link.getVelocityEnabled() ? 1 : 0)
-),
+                                    (uint32_t) (self->link.getVelocityEnabled() ? 1 : 0),
+
+                                    /*
+                                        Two reserved words, so the indices below land
+                                        where the loader reads them.
+
+                                        They had drifted apart. The loader takes the
+                                        send rate from word 33 and this list had it at
+                                        31, so a reload read the bend-path colour as a
+                                        send rate; ripple source and the whole waves
+                                        setting were never written at all and came back
+                                        zero every time. Nothing announced it, because
+                                        every one of those has a plausible-looking
+                                        default. Held open here rather than closed up,
+                                        so the two lists stay aligned by position.
+                                    */
+                                    0u,
+                                    0u,
 
                                     (uint32_t) self->link.getSendRate(),
-                                    (uint32_t) ((self->link.getBendPathEnabled() ? 1 : 0)),
-                                    self->link.getBendPathColour() };
+                                    (uint32_t) (self->link.getBendPathEnabled() ? 1 : 0),
+                                    self->link.getBendPathColour(),
+                                    (uint32_t) self->link.getRippleSource(),
+                                    (uint32_t) (((self->link.getWavesMode() & 3) << 11)
+                                                + (self->link.getWavesEnabled() ? 0x400 : 0)
+                                                + (self->link.getWavesDelay() & 0x3ff)) };
 
     if (stream->write (stream, gradients, sizeof (gradients)) != (int64_t) sizeof (gradients))
         return false;
@@ -4125,12 +4254,24 @@ bool stateLoad (const clap_plugin_t *plugin, const clap_istream_t *stream)
         self->link.setTensionHome (extras[28]);
         self->link.setTensionFar (extras[29]);
         self->link.setVelocityEnabled ((extras[30] & 1u) != 0u);
-        self->link.setSendRate ((int) extras[33]);
-        self->link.setBendPathEnabled (extras[34] != 0);
-        self->link.setBendPathColour (extras[35]);
-        self->link.setRippleSource ((int) extras[36]);
-        self->link.setWavesEnabled ((extras[37] & 0x400u) != 0u);
-        self->link.setWavesDelay ((int) (extras[37] & 0x3ffu));
+        /*
+            Only from a state that actually wrote them.
+
+            Versions before 26 saved these words at the wrong indices, or not at all, so
+            reading them back restores a send rate taken from a colour. An older state
+            keeps the defaults for these five rather than inventing values from whatever
+            happened to sit at those offsets.
+        */
+        if (header[1] >= 26)
+        {
+            self->link.setSendRate ((int) extras[33]);
+            self->link.setBendPathEnabled (extras[34] != 0);
+            self->link.setBendPathColour (extras[35]);
+            self->link.setRippleSource ((int) extras[36]);
+            self->link.setWavesEnabled ((extras[37] & 0x400u) != 0u);
+            self->link.setWavesDelay ((int) (extras[37] & 0x3ffu));
+            self->link.setWavesMode ((int) ((extras[37] >> 11) & 3u));
+        }
     }
 
     uint32_t length = 0;

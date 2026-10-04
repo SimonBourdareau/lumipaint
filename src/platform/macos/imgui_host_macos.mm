@@ -93,6 +93,11 @@ struct ImGuiHostWindow
         the Windows side, for the same reason, reached by a different route.
     */
     bool rendering;
+
+    /* Stops a modal panel's own run loop from pumping a timer tick that opens a second
+       panel behind the first. */
+    bool inAfterFrame;
+    ImGuiHostAfterFrameFn afterFrame;
 };
 
 @interface LumiPaintView : NSOpenGLView
@@ -165,6 +170,22 @@ struct ImGuiHostWindow
     ImGui::SetCurrentContext (previous);
 
     c->rendering = false;
+
+    /*
+        Now, and not a line earlier.
+
+        The frame is closed, the caller's context is back and the guard is down, so a
+        panel run from here spins its run loop against the application's own drawing
+        state rather than in the middle of ours. Running one inside drawRect is a nested
+        run loop inside a paint, which is worse than the equivalent on Windows, not
+        better.
+    */
+    if (c->afterFrame != nullptr && ! c->inAfterFrame)
+    {
+        c->inAfterFrame = true;
+        c->afterFrame (c->userData);
+        c->inAfterFrame = false;
+    }
 }
 
 @end
@@ -543,4 +564,12 @@ void imguiHostHide (ImGuiHostWindow *c)
 
     if (c->window != nil)
         [c->window orderOut: nil];
+}
+
+void imguiHostSetAfterFrame (ImGuiHostWindow *c, ImGuiHostAfterFrameFn afterFrame)
+{
+    if (c == nullptr)
+        return;
+
+    c->afterFrame = afterFrame;
 }

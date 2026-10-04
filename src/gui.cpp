@@ -283,6 +283,10 @@ public:
         drawMotionControls();
         endSection();
 
+        beginSection ("Screensaver", IM_COL32 (30, 28, 44, 255));
+        drawScreensaverControls();
+        endSection();
+
         beginSection ("Degrees", IM_COL32 (38, 30, 40, 255));
         drawDegreesSection();
         endSection();
@@ -804,6 +808,56 @@ private:
         return total;
     }
 
+    int countPressed() const
+    {
+        int total = 0;
+
+        for (int n = 0; n < 128; ++n)
+            if (owner->link.isNoteSounding (n))
+                ++total;
+
+        return total;
+    }
+
+    /*
+        Paint whatever is being held, and leave it selected.
+
+        Read into a snapshot first. isNoteSounding reads bits the audio thread writes,
+        so a key lifted between counting and painting would leave the selection
+        describing a different set of notes than the ones that actually changed colour -
+        rare, and baffling when it happens.
+
+        The selection is set as well as painted because that is what makes cycling work:
+        hold a chord, press this once, then move the picker and use Apply to selection
+        for each colour without playing the chord again.
+    */
+    void applyToPressed (uint32_t rgb)
+    {
+        bool pressed[128];
+        int total = 0;
+
+        for (int n = 0; n < 128; ++n)
+        {
+            pressed[n] = owner->link.isNoteSounding (n);
+
+            if (pressed[n])
+                ++total;
+        }
+
+        if (total == 0)
+            return;
+
+        for (int n = 0; n < 128; ++n)
+        {
+            selected[n] = pressed[n];
+
+            if (pressed[n])
+                owner->link.setColour (n, rgb);
+        }
+
+        markDirty();
+    }
+
     uint32_t currentPickerRgb() const
     {
         return (((uint32_t) (pickerColour[0] * 255.0f + 0.5f)) << 16)
@@ -841,6 +895,31 @@ private:
         {
             owner->link.setColour (anchorNote, currentPickerRgb());
             markDirty();
+        }
+
+        {
+            const int pressed = countPressed();
+            char label[64];
+
+            std::snprintf (label, sizeof (label),
+                           pressed == 1 ? "Apply to %d pressed note"
+                                        : "Apply to %d pressed notes", pressed);
+
+            ImGui::BeginDisabled (pressed == 0);
+
+            if (ImGui::Button (label, ImVec2 (200.0f, 0.0f)))
+                applyToPressed (currentPickerRgb());
+
+            ImGui::EndDisabled();
+
+            /* A held key shows the highlight colour rather than its own while Highlight
+               is on, so the paint lands but cannot be seen until the key is released.
+               Worth saying, since it looks like the button did nothing. */
+            if (owner->highlight)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled ("Highlight hides it until you let go");
+            }
         }
 
         if (ImGui::Button ("Apply to selection", ImVec2 (150.0f, 0.0f)))
@@ -1335,6 +1414,50 @@ private:
         }
     }
 
+    /*
+        The idle pattern, in its own section.
+
+        It sat among the display effects, which was the wrong company: everything else
+        there reacts to playing, and this one only runs when nothing is. Having a mode
+        to choose made the mismatch worse, so it moved out.
+    */
+    void drawScreensaverControls()
+    {
+        bool waves = owner->link.getWavesEnabled();
+
+        if (ImGui::Checkbox ("Screensaver", &waves))
+        {
+            owner->link.setWavesEnabled (waves);
+            markDirty();
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled (owner->link.wavesRunning() ? "running" : "idle");
+
+        int mode = owner->link.getWavesMode();
+        ImGui::SetNextItemWidth (150.0f);
+
+        if (ImGui::Combo ("Pattern", &mode, "Waves\0Aurora\0Breathing\0Ember\0"))
+        {
+            owner->link.setWavesMode (mode);
+            markDirty();
+        }
+
+        int delay = owner->link.getWavesDelay();
+        ImGui::SetNextItemWidth (150.0f);
+
+        if (ImGui::SliderInt ("Starts after", &delay, 5, 600, "%ds"))
+        {
+            owner->link.setWavesDelay (delay);
+            markDirty();
+        }
+
+        /* Which ones keep the painted map and which replace it, because that is the
+           only thing about the choice that is not obvious from watching it. */
+        ImGui::TextDisabled (mode >= 2 ? "dims your colours - keyswitches stay readable"
+                                       : "replaces your colours until a note is played");
+    }
+
     void drawMotionControls()
     {
         bool ripple = owner->link.getRippleEnabled();
@@ -1420,27 +1543,6 @@ private:
                        owner->link.getHaloColour(), 4);
         ImGui::SameLine();
         ImGui::TextDisabled ("2+ notes held");
-
-        bool waves = owner->link.getWavesEnabled();
-
-        if (ImGui::Checkbox ("Waves", &waves))
-        {
-            owner->link.setWavesEnabled (waves);
-            markDirty();
-        }
-
-        ImGui::SameLine (140.0f);
-        int delay = owner->link.getWavesDelay();
-        ImGui::SetNextItemWidth (150.0f);
-
-        if (ImGui::SliderInt ("##wavedelay", &delay, 5, 600, "after %ds"))
-        {
-            owner->link.setWavesDelay (delay);
-            markDirty();
-        }
-
-        ImGui::SameLine();
-        ImGui::TextDisabled (owner->link.wavesRunning() ? "running" : "idle screensaver");
 
         bool path = owner->link.getBendPathEnabled();
 
@@ -2132,11 +2234,30 @@ void renderEditor (void *userData)
 
     LumiEditor *editor = (LumiEditor *) self->editor;
     editor->draw();
+}
 
-    /* Anything modal the frame asked for runs now, once drawing is done. The host
-       layer refuses to re-enter a frame in any case, so this is belt and braces - but
-       the belt is what keeps the editor responsive rather than merely unfrozen. */
-    editor->runPendingDialog();
+/*
+    Anything modal the frame asked for, run after the frame rather than inside it.
+
+    This used to sit at the end of renderEditor, which reads as "once drawing is done"
+    and is not: the host calls this between NewFrame and Render, with an ImGui frame
+    open and, on Windows, our GL context current on the host's own UI thread. A file
+    dialog there pumps its own message loop, so the host redrew its windows into our
+    context while its own window sat disabled - a DAW gone black and deaf to the mouse,
+    with the editor frozen on its last frame because the re-entrancy guard turned every
+    repaint away. Nothing about that points at a file dialog.
+
+    imguiHostSetAfterFrame is called once when the editor is created, and the host layer
+    invokes this only when the frame is closed and its drawing state is back as it was.
+*/
+void editorAfterFrame (void *userData)
+{
+    LumiPaint *self = (LumiPaint *) userData;
+
+    if (self == nullptr || self->editor == nullptr)
+        return;
+
+    ((LumiEditor *) self->editor)->runPendingDialog();
 }
 
 void editorClosed (void *userData)
@@ -2169,6 +2290,7 @@ bool guiCreate (const clap_plugin_t *plugin, const char *api, bool isFloating)
         return false;
     }
 
+    imguiHostSetAfterFrame (editor->hostWindow(), editorAfterFrame);
     return true;
 }
 

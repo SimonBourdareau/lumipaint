@@ -16,6 +16,10 @@
 */
 
 #include "keybed_capture.h"
+
+#if defined (__APPLE__)
+ #include "platform/macos/macos_bridge.h"
+#endif
 #include "lumipaint.h"
 
 #include <algorithm>
@@ -416,19 +420,8 @@ bool KeybedCapture::grab (size_t index)
 
 #elif defined (__APPLE__)
 
-/* Implemented in keybed_capture_macos.mm: only finding windows and getting their
-   pixels differ by platform, and everything after that is shared. */
-struct MacWindow
-{
-    uint32_t windowId;
-    std::string title;
-    int width;
-    int height;
-};
-
-std::vector<MacWindow> macListWindows();
-bool macCaptureWindow (uint32_t windowId, std::vector<uint32_t> &pixels,
-                       int &width, int &height);
+/* Only finding windows and getting their pixels differ by platform; everything after
+   that is shared. Both are declared in platform/macos/macos_bridge.h. */
 
 void KeybedCapture::refreshWindows()
 {

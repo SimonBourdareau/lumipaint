@@ -19,28 +19,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Objective-C++ has to be enabled before a .mm file can be compiled.
-#
-# Without this the macOS build does not fail loudly: CMake knows .mm is OBJCXX, finds
-# the language disabled, and quietly leaves imgui_host_macos.mm, preset_macos.mm,
-# keybed_capture_macos.mm and imgui's own imgui_impl_osx.mm out of the target. What you
-# get is a link error listing every symbol those four files define, which reads like
-# missing frameworks rather than a project() line three hundred lines above.
+# Everything Apple-specific lives in cmake/macos.cmake, which returns immediately on
+# any other platform. It was in six places through this file before.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos.cmake")
+
 if(APPLE)
-    enable_language(OBJCXX)
-    set(CMAKE_OBJCXX_STANDARD 17)
-    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
-
-    # NSOpenGLView, NSModalResponse and the rest need a floor somewhere, and the default
-    # is whatever SDK happens to be installed. Universal by default so one build serves
-    # Intel and Apple silicon; override either on the command line.
-    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "" FORCE)
-    endif()
-
-    if(NOT CMAKE_OSX_ARCHITECTURES)
-        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
-    endif()
+    lumipaint_macos_toolchain()
 endif()
 
 # Where build_gui.sh clones them: beside the project, not under extern/.
@@ -61,21 +45,8 @@ foreach(dep CLAP_DIR RTMIDI_DIR IMGUI_DIR)
     endif()
 endforeach()
 
-# ImGui 1.91.5's Cocoa callbacks assume a permanently current context and its
-# non-ARC shutdown leaves notification observers registered. Apply our small
-# context/lifetime fix to a build-local copy, leaving the downloaded SDK intact.
 if(APPLE)
-    set(LUMIPAINT_OSX_BACKEND "${CMAKE_CURRENT_BINARY_DIR}/imgui-backend/imgui_impl_osx.mm")
-    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/imgui-backend")
-    configure_file("${IMGUI_DIR}/backends/imgui_impl_osx.mm" "${LUMIPAINT_OSX_BACKEND}" COPYONLY)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/imgui-osx-context.patch")
-    execute_process(COMMAND /usr/bin/patch --silent --fuzz=0
-        "${LUMIPAINT_OSX_BACKEND}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/imgui-osx-context.patch"
-        RESULT_VARIABLE osx_patch_result)
-    if(NOT osx_patch_result EQUAL 0)
-        message(FATAL_ERROR "Unable to apply the Cocoa context fix. Use ImGui v1.91.5.")
-    endif()
+    lumipaint_macos_patch_imgui("${IMGUI_DIR}" LUMIPAINT_OSX_BACKEND)
 endif()
 set(LUMIPAINT_HOST_SOURCES "" CACHE STRING "Sources implementing imgui_host.h")
 
@@ -83,11 +54,11 @@ set(LUMIPAINT_HOST_SOURCES "" CACHE STRING "Sources implementing imgui_host.h")
 # build spell it out. Still overridable for a port in progress.
 if(NOT LUMIPAINT_HOST_SOURCES)
     if(WIN32)
-        set(LUMIPAINT_HOST_SOURCES src/imgui_host_win32.cpp)
+        set(LUMIPAINT_HOST_SOURCES src/platform/win32/imgui_host_win32.cpp)
     elseif(APPLE)
-        set(LUMIPAINT_HOST_SOURCES src/imgui_host_macos.mm)
+        set(LUMIPAINT_HOST_SOURCES src/platform/macos/imgui_host_macos.mm)
     elseif(UNIX)
-        set(LUMIPAINT_HOST_SOURCES src/imgui_host_x11.cpp)
+        set(LUMIPAINT_HOST_SOURCES src/platform/x11/imgui_host_x11.cpp)
     endif()
 endif()
 
@@ -101,8 +72,8 @@ add_library(LumiPaint MODULE
     src/keybed_capture.cpp
     src/device_claim.cpp
     src/preset.cpp
-    $<$<PLATFORM_ID:Darwin>:src/preset_macos.mm>
-    $<$<PLATFORM_ID:Darwin>:src/keybed_capture_macos.mm>
+    $<$<PLATFORM_ID:Darwin>:src/platform/macos/preset_macos.mm>
+    $<$<PLATFORM_ID:Darwin>:src/platform/macos/keybed_capture_macos.mm>
     ${RTMIDI_DIR}/RtMidi.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -120,24 +91,6 @@ add_library(LumiPaint MODULE
     ${LUMIPAINT_HOST_SOURCES}
 )
 
-# ARC for our own Objective-C++, which the sources already assume.
-#
-# Every __bridge cast in imgui_host_macos.mm and keybed_capture_macos.mm means nothing
-# without it, and the window host holds NSWindow, NSOpenGLView and NSTimer as strong
-# references that it never releases by hand. Nothing was passing -fobjc-arc, so those
-# files were being compiled under manual retain/release, where the casts are meaningless
-# and every one of those references leaks.
-#
-# imgui_impl_osx.mm is left alone deliberately: it guards on __has_feature(objc_arc) and
-# works either way, and ARC is per translation unit, so mixing is fine.
-if(APPLE)
-    set_source_files_properties(
-        src/imgui_host_macos.mm
-        src/preset_macos.mm
-        src/keybed_capture_macos.mm
-        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-endif()
-
 target_include_directories(LumiPaint PRIVATE
     src
     ${CLAP_DIR}/include
@@ -149,15 +102,7 @@ target_include_directories(LumiPaint PRIVATE
 find_package(Threads REQUIRED)
 target_link_libraries(LumiPaint PRIVATE Threads::Threads)
 
-if(APPLE)
-    target_compile_definitions(LumiPaint PRIVATE __MACOSX_CORE__)
-    # CoreMIDI and friends for RtMidi; Cocoa for the window and the dialogs;
-    # CoreGraphics for reading another application's window; OpenGL for the editor.
-    target_link_libraries(LumiPaint PRIVATE
-        "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation"
-        "-framework Cocoa" "-framework CoreGraphics" "-framework OpenGL"
-        "-framework GameController")
-elseif(WIN32)
+if(WIN32)
     target_compile_definitions(LumiPaint PRIVATE __WINDOWS_MM__)
 
     # The same set build_gui.sh links: OpenGL and GDI for the editor, comdlg32 and
@@ -202,29 +147,8 @@ else()
     target_include_directories(LumiPaint PRIVATE ${X11_INCLUDE_DIR})
 endif()
 
-#
-#  A CLAP is one file on Windows and Linux and a bundle on macOS.
-#
-#  PREFIX/SUFFIX alone produced a bare Mach-O called LumiPaint.clap, which no host will
-#  load: the format wants LumiPaint.clap/Contents/MacOS/LumiPaint beside an Info.plist
-#  saying BNDL. The README even said to copy it with `cp -r`, which only makes sense for
-#  a directory - the instruction had been written for the bundle this did not build.
-#
 if(APPLE)
-    set_target_properties(LumiPaint PROPERTIES
-        BUNDLE TRUE
-        BUNDLE_EXTENSION "clap"
-        OUTPUT_NAME "LumiPaint"
-        MACOSX_BUNDLE_BUNDLE_NAME "LumiPaint"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.lumipaint.clap"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
-        MACOSX_BUNDLE_COPYRIGHT "Copyright (C) 2026 Simon Bourdareau"
-        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-bundle.plist.in")
-    add_custom_command(TARGET LumiPaint POST_BUILD
-        COMMAND /usr/bin/codesign --force --sign - --timestamp=none
-            "$<TARGET_BUNDLE_DIR:LumiPaint>"
-        VERBATIM)
+    lumipaint_macos_configure_target(LumiPaint)
 else()
     set_target_properties(LumiPaint PROPERTIES
         PREFIX ""
@@ -262,49 +186,12 @@ if (LUMIPAINT_BUILD_VST3 OR (APPLE AND LUMIPAINT_BUILD_AU))
     FetchContent_MakeAvailable (clap-wrapper)
 
     if(APPLE)
-        # Each wrapper is its own bundle and loads the CLAP embedded inside it.
-        # Applying both wrappers to LumiPaint itself overwrites its bundle format.
         if(LUMIPAINT_BUILD_VST3)
-            add_library(LumiPaint_VST3 MODULE)
-            set_target_properties(LumiPaint_VST3 PROPERTIES
-                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-            add_dependencies(LumiPaint_VST3 LumiPaint)
-            # Repackage when the embedded plugin changes, even if the wrapper's
-            # own sources did not. A target dependency alone only orders builds.
-            set_property(TARGET LumiPaint_VST3 APPEND PROPERTY LINK_DEPENDS
-                "$<TARGET_FILE:LumiPaint>")
-            target_add_vst3_wrapper(TARGET LumiPaint_VST3
-                OUTPUT_NAME "LumiPaint"
-                BUNDLE_IDENTIFIER "com.lumipaint.vst3"
-                BUNDLE_VERSION "1.0.0"
-                SUPPORTS_ALL_NOTE_EXPRESSIONS TRUE
-                MACOS_EMBEDDED_CLAP_LOCATION "$<TARGET_BUNDLE_DIR:LumiPaint>")
-            add_custom_command(TARGET LumiPaint_VST3 POST_BUILD
-                COMMAND /usr/bin/codesign --force --sign - --timestamp=none
-                    "$<TARGET_BUNDLE_DIR:LumiPaint_VST3>"
-                VERBATIM)
+            lumipaint_macos_add_vst3()
         endif()
+
         if(LUMIPAINT_BUILD_AU)
-            add_library(LumiPaint_AU MODULE)
-            set_target_properties(LumiPaint_AU PROPERTIES
-                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-            add_dependencies(LumiPaint_AU LumiPaint)
-            set_property(TARGET LumiPaint_AU APPEND PROPERTY LINK_DEPENDS
-                "$<TARGET_FILE:LumiPaint>")
-            target_add_auv2_wrapper(TARGET LumiPaint_AU
-                OUTPUT_NAME "LumiPaint"
-                BUNDLE_IDENTIFIER "com.lumipaint.au"
-                BUNDLE_VERSION "1.0"
-                MANUFACTURER_NAME "LumiPaint"
-                MANUFACTURER_CODE "Lmpt"
-                SUBTYPE_CODE "Lmp1"
-                INSTRUMENT_TYPE "aumf"
-                PREFER_CMAKE_AUV2_CONFIGURATION TRUE
-                MACOS_EMBEDDED_CLAP_LOCATION "$<TARGET_BUNDLE_DIR:LumiPaint>")
-            add_custom_command(TARGET LumiPaint_AU POST_BUILD
-                COMMAND /usr/bin/codesign --force --sign - --timestamp=none
-                    "$<TARGET_BUNDLE_DIR:LumiPaint_AU>"
-                VERBATIM)
+            lumipaint_macos_add_au()
         endif()
     elseif(LUMIPAINT_BUILD_VST3)
         target_add_vst3_wrapper (TARGET LumiPaint

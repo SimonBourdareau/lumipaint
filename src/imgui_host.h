@@ -34,6 +34,24 @@ struct ImGuiHostWindow;
 typedef void (*ImGuiHostRenderFn) (void *userData);
 typedef void (*ImGuiHostClosedFn) (void *userData);
 
+/*
+ * Called once the frame is finished and the platform's drawing state is back as
+ * it was found: no ImGui frame open, no GL context of ours left current, no
+ * re-entrancy guard held.
+ *
+ * It exists for one thing, and that thing was a bug. A file dialog opened from
+ * inside `render` is opened in the middle of a frame - and a modal dialog pumps
+ * its own message loop, so for as long as it is up the host redraws its own
+ * windows on this thread while our GL context is still current and its window is
+ * disabled. The DAW goes black and stops answering the mouse, the editor keeps
+ * showing its last frame because the re-entrancy guard turns every repaint away,
+ * and none of it looks like it came from a file dialog.
+ *
+ * Deferring within `render` is not enough - that is still inside the frame. It
+ * has to be after it, which only the host layer can arrange.
+ */
+typedef void (*ImGuiHostAfterFrameFn) (void *userData);
+
 ImGuiHostWindow *imguiHostCreate (uint32_t width, uint32_t height, bool floating,
                                   ImGuiHostRenderFn render, ImGuiHostClosedFn closed,
                                   void *userData);
@@ -45,3 +63,7 @@ void imguiHostSetSize (ImGuiHostWindow *window, uint32_t width, uint32_t height)
 void imguiHostSetScale (ImGuiHostWindow *window, double scale);
 void imguiHostShow (ImGuiHostWindow *window);
 void imguiHostHide (ImGuiHostWindow *window);
+
+/* Optional. Not passed to imguiHostCreate so that the existing signature, and every
+   caller of it, stays as it is. */
+void imguiHostSetAfterFrame (ImGuiHostWindow *window, ImGuiHostAfterFrameFn afterFrame);

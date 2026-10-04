@@ -47,7 +47,7 @@ unzip the Mac package and double-click **Install LumiPaint.app**.
 The app runs setup directly without opening Terminal or loading your interactive
 shell configuration. It contains all payloads, so moving the app does not break
 installation. From a source checkout, build into `build-macos` first using the
-commands below, then run `./package-macos.sh` to create the app.
+commands below, then run `./packaging/macos/package-macos.sh` to create the app.
 The installer validates the signed bundles, installs VST3 and CLAP into your
 user Library, and backs up any previous installation. It keeps the device file at
 `~/Library/Application Support/LumiPaint/lumi_paint.littlefoot`.
@@ -58,7 +58,7 @@ manual device step is still required: neither the Mac nor Windows installer uplo
 Littlefoot automatically. Opening Dashboard or copying the file is not proof that
 the device has loaded it. Expect a dim rainbow after the upload.
 
-To assemble a Mac download after building, run `./package-macos.sh`. It creates a
+To assemble a Mac download after building, run `./packaging/macos/package-macos.sh`. It creates a
 folder and ZIP under `release/`, including the installer, both plugins, Littlefoot,
 license and setup instructions. These are locally signed development builds;
 they are not notarized for public distribution.
@@ -72,7 +72,7 @@ If Dashboard cannot open, setup displays instructions for installing it through
 ROLI Connect and confirms that plugin installation has completed. A keyboard
 that already has the LumiPaint program does not need another upload.
 
-For a preflight without installation, use `./install-macos.command --check`.
+For a preflight without installation, use `./packaging/macos/install-macos.command --check`.
 `--install-only` skips the dialogs and Dashboard handoff; close DAWs before using
 it. The installer tests (`bash tests/macos_installer_test.sh`) use temporary
 Library folders and never access the keyboard.
@@ -247,10 +247,35 @@ step 1; building or installing the plugin does not load that program onto the de
 Linux:
 
 ```sh
+./build-linux.sh --install
+```
+
+That fetches the three pinned dependencies, checks you have the headers it needs,
+builds, and copies the result into `~/.clap`. Add `--vst3` for the VST3 wrapper as
+well, drop `--install` to leave it in `build/`. If a header is missing it prints the
+package names for Debian, Fedora and Arch rather than failing in the compiler.
+
+By hand, if you would rather:
+
+```sh
+./fetch-deps.sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-cp build/LumiPaint.clap ~/.clap/
+cp -r build/LumiPaint.clap ~/.clap/
 ```
+
+X11 and GLX, not Wayland — that is what CLAP's linux API hands over. Under XWayland it
+works; under a pure Wayland session it does not.
+
+To check the editor actually opens without a DAW:
+
+```sh
+cc -Iclap-src/include tests/linux_gui_smoke.c -o smoke -ldl -lX11
+xvfb-run -s "-screen 0 1400x960x24" ./smoke build/LumiPaint.clap
+```
+
+That is a minimal CLAP host: it loads the module, creates the plugin, parents the
+editor into a real X11 window and renders frames. It is what CI runs.
 
 Linux needs `libx11-dev`, `libgl1-mesa-dev` and `libasound2-dev`, and X11 — under a
 native Wayland session the editor will not embed and the capture cannot work at all,
@@ -588,13 +613,66 @@ whichever block can reach the host relays them.
 
 ---
 
+## Releases
+
+Tagging builds all three platforms and drafts a release with the binaries attached:
+
+```sh
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+`.github/workflows/release.yml` builds Linux, Windows and macOS in parallel, runs the
+Linux editor smoke test, checks the macOS CLAP really is a bundle with a valid
+`Info.plist`, and uploads everything to a **draft** release for you to look over before
+publishing. Nothing is signed or notarized.
+
+To try a build without committing to a tag, run the workflow by hand from the Actions
+tab — same three builds, results left as artifacts, no release created.
+
+Building the release in CI rather than locally means the binaries and the tag match.
+They did not for v1.0.0: the attached zip was built by hand from a tree that had moved
+on from the tag.
+
+## Repository layout
+
+```
+src/                  the plugin: the same code on every platform
+src/platform/win32/   the window and GL context on Windows
+src/platform/macos/   window, screen capture and file dialogs on macOS
+src/platform/x11/     the window and GL context on Linux
+cmake/                the macOS build module, the bundle plist, the ImGui patch
+packaging/macos/      the installer app and the script that assembles it
+device/               the Littlefoot program that runs on the keyboard
+tests/                macOS installer and VST3 tests
+```
+
+Only three things are platform-specific: opening a window, reading another
+application's screen, and showing a file dialog. Everything else — the detector, the
+colour engine, the wire protocol, the editor itself — is one implementation shared by
+all three. `src/platform/macos/macos_bridge.h` is the whole contract between the plain
+C++ and the Objective-C++; both sides include it, so a mismatch is a compile error
+rather than something that links and then misbehaves.
+
+`packaging/macos/` is kept out of `src/` because none of it is plugin code. CMake never
+compiles `macos_installer_main.m`; `package-macos.sh` does, with a direct call to clang.
+
 ## Porting
 
 `src/imgui_host.h` is the window and OpenGL contract: create, destroy, set parent, set
 size, set scale, show, hide, plus a render callback the layer invokes when it wants a
-frame. There is an implementation per platform — `imgui_host_win32.cpp`,
-`imgui_host_macos.mm` and `imgui_host_x11.cpp` — and `LUMIPAINT_HOST_SOURCES` picks one.
-Anything else would need a fourth.
+frame, plus an after-frame callback for anything modal. There is an implementation per
+platform under `src/platform/` — `win32/imgui_host_win32.cpp`,
+`macos/imgui_host_macos.mm` and `x11/imgui_host_x11.cpp` — and `LUMIPAINT_HOST_SOURCES`
+picks one. Anything else would need a fourth.
+
+The after-frame callback is not decoration. A file dialog opened from inside `render` is
+opened in the middle of a frame, and a modal dialog pumps its own message loop: the host
+redraws its own windows on that thread while the plugin's GL context is still current and
+its own window sits disabled. The DAW goes black and stops answering the mouse while the
+editor sits frozen on its last frame, and nothing about that points at a file dialog.
+Deferring inside `render` is not enough — it has to be after the frame, which only the
+host layer can arrange.
 
 The three are deliberately written to read side by side, because the awkward parts are
 the same everywhere and only the spelling changes: not drawing a frame while a frame is

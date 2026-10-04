@@ -41,19 +41,9 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 
-#include <cstdint>
-#include <string>
-#include <vector>
+#include "macos_bridge.h"
 
 namespace lumipaint {
-
-struct MacWindow
-{
-    uint32_t windowId;
-    std::string title;
-    int width;
-    int height;
-};
 
 /* Every on-screen window big enough to hold a keyboard, owned by another application. */
 std::vector<MacWindow> macListWindows()

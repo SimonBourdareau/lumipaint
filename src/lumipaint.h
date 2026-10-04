@@ -142,9 +142,9 @@ const uint32_t kStateMagic   = 0x4c554d31;
     itself. The descriptor said 0.1.0 while the first release was tagged v1.0.0, which is
     exactly the kind of small lie that wastes someone's afternoon.
 */
-const char * const kPluginVersion = "1.0.0";
+const char * const kPluginVersion = "1.0.1";
 
-const uint32_t kStateVersion = 25;
+const uint32_t kStateVersion = 26;
 
 enum ParamId
 {
@@ -418,6 +418,17 @@ public:
     bool getWavesEnabled() const;
     void setWavesDelay (int seconds);
     int getWavesDelay() const;
+
+    /*
+        Which idle pattern runs.
+
+        Waves and aurora replace the painted map, because a field of colour over a
+        colour map is neither. Breathing and ember keep it and move its brightness
+        instead, so the keyswitches stay readable while the keyboard is idle - which is
+        the point of having painted them.
+    */
+    void setWavesMode (int mode);
+    int getWavesMode() const;
     bool wavesRunning() const;
 
     /*
@@ -611,6 +622,9 @@ private:
 
     std::atomic<int> wavesEnabled;
     std::atomic<int> wavesDelay;
+
+    /* Which idle pattern runs: 0 waves, 1 aurora, 2 breathing, 3 ember. */
+    std::atomic<int> wavesMode;
     std::atomic<int> idleMs;
     int wavePhase;
 

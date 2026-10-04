@@ -6,7 +6,7 @@ trap 'rm -rf -- "$test_dir"' EXIT
 fixture="$test_dir/Release With Spaces"
 library="$test_dir/User Library"
 mkdir -p "$fixture"
-cp "$repo_dir/install-macos.command" "$fixture/"
+cp "$repo_dir/packaging/macos/install-macos.command" "$fixture/"
 cp "$repo_dir/device/lumi_paint.littlefoot" "$fixture/"
 for format in vst3 clap; do
     /usr/bin/ditto "$repo_dir/build-macos/LumiPaint.$format" "$fixture/LumiPaint.$format"

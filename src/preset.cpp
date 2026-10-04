@@ -75,7 +75,24 @@ std::string runDialog (bool saving)
     OPENFILENAMEW ofn;
     ZeroMemory (&ofn, sizeof (ofn));
     ofn.lStructSize = sizeof (ofn);
-    ofn.hwndOwner = GetActiveWindow();
+    /*
+        A top-level owner, and never null.
+
+        GetActiveWindow answers for the calling thread and can return nothing, and an
+        ownerless modal dialog is free to fall behind the DAW - at which point the DAW
+        is disabled, unresponsive, and the thing disabling it is invisible. Walking up
+        to the root also means the window that gets disabled and re-enabled is the one
+        the user is actually looking at.
+    */
+    HWND owner = GetActiveWindow();
+
+    if (owner == nullptr)
+        owner = GetForegroundWindow();
+
+    if (owner != nullptr)
+        owner = GetAncestor (owner, GA_ROOT);
+
+    ofn.hwndOwner = owner;
     ofn.lpstrFilter = L"LumiPaint map\0*.lumimap\0All files\0*.*\0";
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
@@ -104,17 +121,10 @@ std::string runDialog (bool saving)
 
 #if defined (__APPLE__)
 
-/*
-    Implemented in preset_macos.mm, so this file stays plain C++ and only the part that
-    must be Objective-C is.
-
-    Declared after the anonymous namespace closes, which is not where it used to sit. An
-    anonymous namespace gives internal linkage, so the declaration could never resolve
-    against the definition in the .mm - the macOS build compiled both files and then
-    failed at the link with an undefined symbol, which is not where anyone looks for a
-    file-dialog problem.
-*/
-std::string macDialog (bool saving);
+/* macDialog lives in platform/macos/macos_bridge.h, at namespace scope. It was
+   declared in the anonymous namespace above once, where internal linkage meant it
+   could never resolve against the definition in the .mm. */
+#include "platform/macos/macos_bridge.h"
 
 #endif
 
@@ -269,11 +279,24 @@ bool PresetIO::save (const std::string &path, const LumiLink &link,
     out << "pressed " << hex (link.getPressColour()) << '\n';
     out << "pressure " << hex (link.getPressureGradColour()) << '\n';
     out << "bend " << hex (link.getBendGradColour()) << '\n';
-    out << "ripple " << hex (link.getRippleColour()) << '\n';
-    out << "splash " << hex (link.getSplashColour()) << '\n';
-    out << "afterglow " << hex (link.getAfterglowColour()) << '\n';
-    out << "pulse " << hex (link.getPulseColour()) << '\n';
-    out << "halo " << hex (link.getHaloColour()) << '\n';
+    /*
+        Five colours that used to be written under the same key as their on/off switch.
+
+        A map held "ripple 3f80ff" for the tint and "ripple 1" for the switch, and the
+        reader tested the switch first - so every one of those colour lines was parsed
+        as an integer and thrown away. "3f80ff" read as 3, "ffffff" failed and read as
+        0, and which of the two happened depended on whether the colour began with a
+        digit. The tints never survived a save and load, and the switch was briefly set
+        from a fragment of a colour before the real switch line put it back.
+
+        Suffixed keys now, so no key carries two meanings. The reader still accepts the
+        old spelling for the switch, which is what the old files actually stored.
+    */
+    out << "ripple-colour " << hex (link.getRippleColour()) << '\n';
+    out << "splash-colour " << hex (link.getSplashColour()) << '\n';
+    out << "afterglow-colour " << hex (link.getAfterglowColour()) << '\n';
+    out << "pulse-colour " << hex (link.getPulseColour()) << '\n';
+    out << "halo-colour " << hex (link.getHaloColour()) << '\n';
     out << "tension-home " << hex (link.getTensionHome()) << '\n';
     out << "tension-far " << hex (link.getTensionFar()) << '\n';
 
@@ -304,6 +327,7 @@ bool PresetIO::save (const std::string &path, const LumiLink &link,
     out << "tension-strength " << link.getTensionAlpha() << '\n';
     out << "waves " << (link.getWavesEnabled() ? 1 : 0) << '\n';
     out << "waves-delay " << link.getWavesDelay() << '\n';
+    out << "waves-mode " << link.getWavesMode() << '\n';
     out << "bend-path " << (link.getBendPathEnabled() ? 1 : 0) << '\n';
     out << "velocity " << (link.getVelocityEnabled() ? 1 : 0) << '\n';
     out << "bend-scale " << link.getBendFullScale() << '\n';
@@ -378,6 +402,7 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
         else if (key == "tension-strength") { int v; parts >> v; link.setTensionAlpha (v); }
         else if (key == "waves") { int v; parts >> v; link.setWavesEnabled (v != 0); }
         else if (key == "waves-delay") { int v; parts >> v; link.setWavesDelay (v); }
+        else if (key == "waves-mode") { int v; parts >> v; link.setWavesMode (v); }
         else if (key == "bend-path") { int v; parts >> v; link.setBendPathEnabled (v != 0); }
         else if (key == "velocity") { int v; parts >> v; link.setVelocityEnabled (v != 0); }
         else if (key == "bend-scale") { int v; parts >> v; link.setBendFullScale (v); }
@@ -399,11 +424,11 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
             else if (key == "pressed") link.setPressColour (rgb);
             else if (key == "pressure") link.setPressureGradColour (rgb);
             else if (key == "bend") link.setBendGradColour (rgb);
-            else if (key == "ripple") link.setRippleColour (rgb);
-            else if (key == "splash") link.setSplashColour (rgb);
-            else if (key == "afterglow") link.setAfterglowColour (rgb);
-            else if (key == "pulse") link.setPulseColour (rgb);
-            else if (key == "halo") link.setHaloColour (rgb);
+            else if (key == "ripple-colour") link.setRippleColour (rgb);
+            else if (key == "splash-colour") link.setSplashColour (rgb);
+            else if (key == "afterglow-colour") link.setAfterglowColour (rgb);
+            else if (key == "pulse-colour") link.setPulseColour (rgb);
+            else if (key == "halo-colour") link.setHaloColour (rgb);
             else if (key == "tension-home") link.setTensionHome (rgb);
             else if (key == "tension-far") link.setTensionFar (rgb);
         }

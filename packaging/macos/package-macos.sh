@@ -1,7 +1,12 @@
 #!/bin/bash
 set -euo pipefail
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-"$repo_dir/install-macos.command" --check
+# This script and its two companions live in packaging/macos/; everything they read
+# from the project - the built bundles, the Littlefoot file, the licence - is two
+# levels up. Kept apart from src/ because none of it is plugin code: CMake never
+# compiles macos_installer_main.m, this script does, with a direct call to clang.
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+"$script_dir/install-macos.command" --check
 release_root="$repo_dir/release"
 mkdir -p "$release_root"
 package_dir=$(mktemp -d "$release_root/LumiPaint-macOS.XXXXXX")
@@ -13,7 +18,7 @@ for format in vst3 clap; do
         "$repo_dir/build-macos/LumiPaint.$format" "$resources/LumiPaint.$format"
 done
 cp "$repo_dir/device/lumi_paint.littlefoot" "$resources/"
-cp "$repo_dir/install-macos.command" "$resources/"
+cp "$script_dir/install-macos.command" "$resources/"
 cp "$repo_dir/LICENSE" "$package_dir/"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -23,7 +28,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Install LumiPaint</string>
 <key>CFBundleExecutable</key><string>Install LumiPaint</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0.0</string>
+<key>CFBundleShortVersionString</key><string>1.0.1</string>
 <key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -34,7 +39,7 @@ launcher_parts=()
 for architecture in $architectures; do
     part="$package_dir/launcher-$architecture"
     /usr/bin/clang -fobjc-arc -framework Cocoa -arch "$architecture" \
-        -mmacosx-version-min=11.0 "$repo_dir/src/macos_installer_main.m" -o "$part"
+        -mmacosx-version-min=11.0 "$script_dir/macos_installer_main.m" -o "$part"
     launcher_parts+=("$part")
 done
 /usr/bin/lipo -create "${launcher_parts[@]}" -output "$app/Contents/MacOS/Install LumiPaint"

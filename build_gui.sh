@@ -33,7 +33,7 @@ fail() { echo; echo "FAILED: $1"; exit 1; }
 # ---- 1. everything present? ------------------------------------------------
 missing=
 for f in src/lumipaint.cpp src/lumipaint.h src/gui.cpp src/imgui_host.h \
-         src/imgui_host_win32.cpp src/keybed_capture.cpp src/keybed_capture.h \
+         src/platform/win32/imgui_host_win32.cpp src/keybed_capture.cpp src/keybed_capture.h \
          src/device_claim.cpp src/device_claim.h src/preset.cpp src/preset.h \
          clap-src/include/clap/clap.h imgui/imgui.cpp \
          imgui/backends/imgui_impl_win32.cpp \
@@ -111,7 +111,7 @@ fi
 
 echo "[3/5] gui.cpp + imgui_host_win32.cpp"
 $CXX $OPT $EXTRA $INC -c src/gui.cpp -o obj/gui.o || fail "gui.cpp"
-$CXX $OPT $EXTRA $INC -c src/imgui_host_win32.cpp -o obj/imgui_host_win32.o \
+$CXX $OPT $EXTRA $INC -c src/platform/win32/imgui_host_win32.cpp -o obj/imgui_host_win32.o \
   || fail "imgui_host_win32.cpp"
 $CXX -std=c++17 $OPT $EXTRA $INC -c src/keybed_capture.cpp -o obj/keybed_capture.o \
   || fail "keybed_capture.cpp"
@@ -252,7 +252,7 @@ if [ -z "$LUMIPAINT_NO_VST3" ]; then
               -DCMAKE_C_FLAGS="$EXTRA" -DCMAKE_CXX_FLAGS="$EXTRA" \
               -DCLAP_SDK_ROOT="$PWD/clap-src" \
               -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=TRUE \
-              -DLUMIPAINT_HOST_SOURCES=src/imgui_host_win32.cpp \
+              -DLUMIPAINT_HOST_SOURCES=src/platform/win32/imgui_host_win32.cpp \
               -DCMAKE_BUILD_TYPE=Release >build-vst3.log 2>&1
     }
 
@@ -293,7 +293,7 @@ if [ -z "$LUMIPAINT_NO_VST3" ]; then
 
     if [ -n "$VST3" ]; then
         echo "built $VST3"
-        echo "install: copy it to %COMMONPROGRAMFILES%\\VST3\\"
+        echo "install: copy it to %LOCALAPPDATA%\\Programs\\Common\\VST3\\"
     else
         echo "VST3 build reported success but produced no bundle - see build-vst3.log"
     fi

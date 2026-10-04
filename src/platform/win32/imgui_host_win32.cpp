@@ -42,6 +42,8 @@ struct ImGuiHostWindow
     int timerFast;
     bool created;
     bool rendering;
+    bool inAfterFrame;
+    ImGuiHostAfterFrameFn afterFrame;
 };
 
 namespace {
@@ -157,6 +159,21 @@ void renderFrame (ImGuiHostWindow *c)
 
     wglMakeCurrent (prevDc, prevRc);
     c->rendering = false;
+
+    /*
+        Now, and not a line earlier.
+
+        The frame is closed, our context is off this thread and the guard is down, so
+        anything modal in here runs against the host's own drawing state rather than
+        ours. The second guard stops the dialog's message loop from pumping a timer tick
+        that opens a second dialog behind the first.
+    */
+    if (c->afterFrame != nullptr && ! c->inAfterFrame)
+    {
+        c->inAfterFrame = true;
+        c->afterFrame (c->userData);
+        c->inAfterFrame = false;
+    }
 }
 
 VOID CALLBACK timerProc (HWND h, UINT msg, UINT_PTR id, DWORD tick)
@@ -406,6 +423,8 @@ ImGuiHostWindow *imguiHostCreate (uint32_t width, uint32_t height, bool floating
     c->timerFast = 0;
     c->created = false;
     c->rendering = false;
+    c->inAfterFrame = false;
+    c->afterFrame = nullptr;
 
     WNDCLASSEXW wc;
     ZeroMemory (&wc, sizeof (wc));
@@ -666,4 +685,12 @@ void imguiHostHide (ImGuiHostWindow *c)
 
     releaseInput (c->hwnd);
     ShowWindow (c->hwnd, SW_HIDE);
+}
+
+void imguiHostSetAfterFrame (ImGuiHostWindow *c, ImGuiHostAfterFrameFn afterFrame)
+{
+    if (c == nullptr)
+        return;
+
+    c->afterFrame = afterFrame;
 }

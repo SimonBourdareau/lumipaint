@@ -86,6 +86,8 @@ struct ImGuiHostWindow
     bool floating = false;
     bool visible = false;
     bool rendering = false;
+    bool inAfterFrame = false;
+    ImGuiHostAfterFrameFn afterFrame = nullptr;
     std::chrono::steady_clock::time_point lastFrame;
     std::atomic<bool> running { false };
 
@@ -337,6 +339,22 @@ void startTicker (ImGuiHostWindow *c)
             {
                 std::lock_guard<std::mutex> held (c->lock);
                 renderFrame (c);
+            }
+
+            /*
+                Outside the lock, deliberately.
+
+                A dialog here is zenity or kdialog run through popen, which does not
+                return until the user is done with it. Holding the lock across that
+                would block setSize, setTitle and everything else the host might call
+                for as long as the dialog is up - a freeze with a plausible-looking
+                cause, which is the worst kind.
+            */
+            if (c->afterFrame != nullptr && ! c->inAfterFrame)
+            {
+                c->inAfterFrame = true;
+                c->afterFrame (c->userData);
+                c->inAfterFrame = false;
             }
 
             std::this_thread::sleep_for (std::chrono::milliseconds (16));
@@ -676,4 +694,13 @@ void imguiHostHide (ImGuiHostWindow *c)
     std::lock_guard<std::mutex> held (c->lock);
     XUnmapWindow (c->display, c->window);
     XFlush (c->display);
+}
+
+void imguiHostSetAfterFrame (ImGuiHostWindow *c, ImGuiHostAfterFrameFn afterFrame)
+{
+    if (c == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> held (c->lock);
+    c->afterFrame = afterFrame;
 }

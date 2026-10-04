@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source "$repo_dir/install-macos.command"
+source "$repo_dir/packaging/macos/install-macos.command"
 events=()
 notices=()
 show_dialog() { events+=(prompt); return "$dialog_status"; }
