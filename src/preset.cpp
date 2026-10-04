@@ -18,6 +18,18 @@
 #include "preset.h"
 #include "lumipaint.h"
 
+/*
+    At file scope, outside every namespace.
+
+    The header opens namespace lumipaint itself. Included from inside that namespace -
+    which is where this sat, down beside the code that calls it - the two nest, and
+    macDialog ends up as lumipaint::lumipaint::macDialog while the .mm defines it one
+    level up. The compiler is unusually helpful about it and prints both names.
+*/
+#if defined (__APPLE__)
+ #include "platform/macos/macos_bridge.h"
+#endif
+
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -119,14 +131,7 @@ std::string runDialog (bool saving)
 
 }
 
-#if defined (__APPLE__)
 
-/* macDialog lives in platform/macos/macos_bridge.h, at namespace scope. It was
-   declared in the anonymous namespace above once, where internal linkage meant it
-   could never resolve against the definition in the .mm. */
-#include "platform/macos/macos_bridge.h"
-
-#endif
 
 const char *PresetIO::lastError()
 {

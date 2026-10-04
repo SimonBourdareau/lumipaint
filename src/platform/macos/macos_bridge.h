@@ -31,6 +31,12 @@
     One header both sides include instead, so the next mismatch is a compile error.
 */
 
+/*
+    Include this at file scope. It opens namespace lumipaint itself, so including it
+    from inside that namespace nests the two and every name in here ends up one level
+    too deep.
+*/
+
 #include <cstdint>
 #include <string>
 #include <vector>
