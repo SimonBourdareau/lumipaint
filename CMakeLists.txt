@@ -127,7 +127,14 @@ if(WIN32)
             -Wl,-Bstatic,--whole-archive -lwinpthread
             -Wl,--no-whole-archive)
     endif()
-else()
+# Linux only, and said so rather than assumed.
+#
+# This was a plain else() while the chain above still began with if(APPLE). Lifting the
+# Apple branch into cmake/macos.cmake left this as the fallback for everything that is
+# not Windows - so a Mac came in here and the build stopped looking for ALSA, which is
+# the Linux MIDI backend and has never existed on macOS. RtMidi uses CoreMIDI there,
+# which cmake/macos.cmake already links.
+elseif(UNIX AND NOT APPLE)
     find_package(ALSA REQUIRED)
     target_compile_definitions(LumiPaint PRIVATE __LINUX_ALSA__)
     target_link_libraries(LumiPaint PRIVATE ALSA::ALSA)
