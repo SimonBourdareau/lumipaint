@@ -61,7 +61,7 @@ jobs:
           cp -r device LICENSE README.md out/LumiPaint-linux-x64/
           cd out && tar czf LumiPaint-linux-x64.tar.gz LumiPaint-linux-x64
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux
           path: out/LumiPaint-linux-x64.tar.gz
@@ -103,7 +103,7 @@ jobs:
             out/LumiPaint-windows-x64/
           cd out && powershell -c "Compress-Archive LumiPaint-windows-x64 LumiPaint-windows-x64.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows
           path: out/LumiPaint-windows-x64.zip
@@ -133,7 +133,7 @@ jobs:
       - name: Package the installer
         run: bash ./packaging/macos/package-macos.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: macos
           path: release/*.zip
@@ -143,7 +143,7 @@ jobs:
     runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
 

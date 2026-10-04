@@ -77,12 +77,23 @@ done
 fail() { echo "LumiPaint setup: $*" >&2; exit 1; }
 [[ $(uname -s) == Darwin ]] || fail "This installer requires macOS."
 
+#
+#  Two places the payloads can be, and they are two levels apart.
+#
+#  Inside the installed app they sit beside this script, in Contents/Resources. Run
+#  straight from a checkout they are in the build directory instead - and that is the
+#  repository root, not this directory, since this script lives in packaging/macos/.
+#  The repo branch still pointed at $script_dir after the move, so --check went looking
+#  for packaging/macos/build-macos and reported the plugins missing on a tree where they
+#  had just been built.
+#
 if [[ -d "$script_dir/LumiPaint.vst3" ]]; then
     payload_dir=$script_dir
     program_file="$script_dir/lumi_paint.littlefoot"
 else
-    payload_dir="$script_dir/build-macos"
-    program_file="$script_dir/device/lumi_paint.littlefoot"
+    repo_dir=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+    payload_dir="$repo_dir/build-macos"
+    program_file="$repo_dir/device/lumi_paint.littlefoot"
 fi
 
 for format in vst3 clap; do

@@ -631,7 +631,11 @@ private:
                 draw->AddLine (ImVec2 (x0, y - 4.0f), ImVec2 (x0, y), tint, 2.0f);
                 draw->AddLine (ImVec2 (x1, y - 4.0f), ImVec2 (x1, y), tint, 2.0f);
 
-                char label[16];
+                /* Sixteen is one short of what "block %d" can produce for an int,
+                   and the compiler says so. A block index is single digit in practice,
+                   but a warning that is right about the arithmetic and wrong about the
+                   data is still a warning everyone learns to scroll past. */
+                char label[24];
                 std::snprintf (label, sizeof (label), "block %d", b + 1);
                 draw->AddText (ImVec2 (x0 + 3.0f, y - 15.0f), tint, label);
             }
@@ -1265,11 +1269,27 @@ private:
 
         if (ImGui::Button ("Read keyboard", ImVec2 (110.0f, 0.0f)) && ! wins.empty())
         {
+            /*
+                The title is remembered only when the grab worked.
+
+                It was indented as though it were inside this block and was not, so a
+                failed grab still recorded the title - and refindWindow would then spend
+                every later attempt chasing a window that had never been read
+                successfully in the first place.
+
+                The index is compared as a size_t as well. Against an unsigned size a
+                negative index converts to something enormous and passes the test, which
+                is the one case the check exists to stop.
+            */
             if (owner->capture->grab ((size_t) captureIndex))
+            {
                 owner->capture->detect();
 
-                if (captureIndex < owner->capture->windows().size())
-                    owner->capture->rememberTitle (owner->capture->windows()[captureIndex].title);
+                const std::vector<CaptureWindow> &found = owner->capture->windows();
+
+                if (captureIndex >= 0 && (size_t) captureIndex < found.size())
+                    owner->capture->rememberTitle (found[captureIndex].title);
+            }
         }
 
         ImGui::SameLine();
