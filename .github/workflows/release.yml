@@ -1,0 +1,166 @@
+name: Release
+
+#
+#  Builds Windows, Linux and macOS and attaches them to a release.
+#
+#  Two ways in. Push a tag and it builds that tag and publishes a release:
+#
+#      git tag v1.0.1 && git push origin v1.0.1
+#
+#  Or run it by hand from the Actions tab with "Run workflow", which builds the current
+#  branch and leaves the results as downloadable artifacts without publishing anything.
+#  Use that to check a build before committing to a tag.
+#
+#  Nothing here is signed or notarized. macOS will quarantine the download; the
+#  installer in packaging/macos handles that side.
+#
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libx11-dev libgl1-mesa-dev libasound2-dev \
+            xvfb libgl1-mesa-dri
+
+      - name: Fetch pinned dependencies
+        run: ./fetch-deps.sh
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      # The editor is the part with no other coverage, and the part most likely to
+      # break silently - a missing font, a context that will not go current, a window
+      # that never maps. Xvfb with software GL catches all three on a runner.
+      - name: Smoke test the editor
+        run: |
+          cc -Iclap-src/include tests/linux_gui_smoke.c -o smoke -ldl -lX11
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1400x960x24" \
+            ./smoke build/LumiPaint.clap
+
+      - name: Package
+        run: |
+          mkdir -p out/LumiPaint-linux-x64
+          cp -r build/LumiPaint.clap out/LumiPaint-linux-x64/
+          cp -r device LICENSE README.md out/LumiPaint-linux-x64/
+          cd out && tar czf LumiPaint-linux-x64.tar.gz LumiPaint-linux-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/LumiPaint-linux-x64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      # MSYS2 with the MinGW toolchain, because build_gui.sh is the path that has
+      # actually shipped working binaries. Building the same way CI does and locally
+      # means a CI failure is reproducible on the machine it was written on.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      - name: Fetch pinned dependencies
+        run: ./fetch-deps.sh
+
+      - name: Build
+        run: ./build_gui.sh
+
+      - name: Package
+        run: |
+          mkdir -p out/LumiPaint-windows-x64
+          cp LumiPaint.clap out/LumiPaint-windows-x64/ 2>/dev/null || \
+            cp build/LumiPaint.clap out/LumiPaint-windows-x64/
+          cp -r LumiPaint.vst3 out/LumiPaint-windows-x64/ 2>/dev/null || true
+          cp -r device LICENSE README.md install-windows.bat uninstall-windows.bat \
+            out/LumiPaint-windows-x64/
+          cd out && powershell -c "Compress-Archive LumiPaint-windows-x64 LumiPaint-windows-x64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/LumiPaint-windows-x64.zip
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch pinned dependencies
+        run: ./fetch-deps.sh
+
+      # Universal by default - cmake/macos.cmake sets arm64;x86_64 unless told
+      # otherwise - so one build serves both Intel and Apple silicon.
+      - name: Build
+        run: |
+          cmake -B build-macos -DCMAKE_BUILD_TYPE=Release -DLUMIPAINT_BUILD_VST3=ON
+          cmake --build build-macos
+
+      - name: Check the bundle is a bundle
+        run: |
+          test -f build-macos/LumiPaint.clap/Contents/MacOS/LumiPaint
+          test -f build-macos/LumiPaint.clap/Contents/Info.plist
+          plutil -lint build-macos/LumiPaint.clap/Contents/Info.plist
+          lipo -archs build-macos/LumiPaint.clap/Contents/MacOS/LumiPaint
+
+      - name: Package the installer
+        run: ./packaging/macos/package-macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: release/*.zip
+
+  publish:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*/*
+          generate_release_notes: true
+          draft: true
+          body: |
+            Built from `${{ github.ref_name }}` by CI, so the binaries and the tag
+            match. Not signed or notarized on any platform.
+
+            **Windows** — unzip and run `install-windows.bat`.
+            **macOS** — unzip and open `Install LumiPaint.app`. Gatekeeper will object
+            the first time: open System Settings, Privacy & Security, and allow it.
+            **Linux** — untar and copy `LumiPaint.clap` into `~/.clap`.
+
+            The keyboard still has to be flashed with `device/lumi_paint.littlefoot`
+            through ROLI Dashboard before anything lights up.
