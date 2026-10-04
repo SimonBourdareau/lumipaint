@@ -59,6 +59,8 @@ jobs:
           mkdir -p out/LumiPaint-linux-x64
           cp -r build/LumiPaint.clap out/LumiPaint-linux-x64/
           cp -r device LICENSE README.md out/LumiPaint-linux-x64/
+          echo "packaged:"
+          ls -la out/LumiPaint-linux-x64/
           cd out && tar czf LumiPaint-linux-x64.tar.gz LumiPaint-linux-x64
 
       - uses: actions/upload-artifact@v5
@@ -95,12 +97,26 @@ jobs:
 
       - name: Package
         run: |
+          set -euo pipefail
           mkdir -p out/LumiPaint-windows-x64
-          cp LumiPaint.clap out/LumiPaint-windows-x64/ 2>/dev/null || \
-            cp build/LumiPaint.clap out/LumiPaint-windows-x64/
-          cp -r LumiPaint.vst3 out/LumiPaint-windows-x64/ 2>/dev/null || true
+
+          # build_gui.sh writes the CLAP beside itself and the VST3 under
+          # build-vst3/<config>/. Both are found rather than assumed, and a miss is
+          # fatal: the first version of this guessed the VST3 path, missed, and swallowed
+          # the error with || true - so the job went green and shipped a zip with no VST3
+          # in it. A release that is quietly missing half of itself is worse than one
+          # that fails.
+          cp LumiPaint.clap out/LumiPaint-windows-x64/
+
+          vst3=$(find build-vst3 -name "LumiPaint.vst3" -print -quit)
+          test -n "$vst3"
+          cp -r "$vst3" out/LumiPaint-windows-x64/
+
           cp -r device LICENSE README.md install-windows.bat uninstall-windows.bat \
             out/LumiPaint-windows-x64/
+
+          echo "packaged:"
+          ls -la out/LumiPaint-windows-x64/
           cd out && powershell -c "Compress-Archive LumiPaint-windows-x64 LumiPaint-windows-x64.zip"
 
       - uses: actions/upload-artifact@v5
