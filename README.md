@@ -331,11 +331,12 @@ Paint the 128-note table by hand.
 | Picker | The colour everything in this section applies. |
 | `Single note` / `All octaves` | Whether clicking a key selects just it or every octave of that pitch class. |
 | Note field, `Set this note` | Colour one note by number, without hunting for it on screen. |
+| `Apply to N pressed notes` | Paint the picker colour onto whatever you are holding down, and leave those notes selected. The count is live and the button is disabled when nothing is held. Because it also sets the selection, you can hold a chord, press this once, then move the picker and use `Apply to selection` for each colour without replaying the chord. While `Incoming` is on a held key shows the highlight colour rather than its own, so the paint lands but is not visible until you let go — the button says so when that is the case. |
 | `Apply to selection` | Paint the picker colour onto the selected notes. |
 | `Pick from selection` | Load the first selected note's colour back into the picker. |
 | `Fill unselected` | Paint everything *except* the selection. One note red and the other 127 blue is two clicks. |
 | `Invert selection`, `Select all`, `Select none` | Selection. |
-| `Save map...` / `Load map...` | Saves the whole look of an instance to a file: the 128 note colours, every effect colour, and the settings that go with them — which effects are on, ripple speed and trail and colour source, afterglow decay, degree and tension strength, the waves delay, brightness and unlit level. Not the port, the octave or anything else particular to this keyboard on this day, so a map opens the same on someone else's chain. Readable text, saved wherever you like; the dialog starts in Documents/LumiPaint but nothing depends on that. |
+| `Save map...` / `Load map...` | Saves the whole look of an instance to a file: the 128 note colours, every effect colour, and the settings that go with them — which effects are on, ripple speed and trail and colour source, afterglow decay, degree and tension strength, the screensaver pattern and its delay, brightness and unlit level. Not the port, the octave or anything else particular to this keyboard on this day, so a map opens the same on someone else's chain. Readable text, saved wherever you like; the dialog starts in Documents/LumiPaint but nothing depends on that. |
 
 Alt-drag across the on-screen keyboard paints directly. Shift-click extends a selection,
 ctrl-click toggles one note.
@@ -431,11 +432,27 @@ and afterglow still read over it.
 | `Chord halo` | With two or more notes held, the same pitch classes light in the other octaves. A single note is ignored. |
 | `Splash` | A chosen CC fires a wave from the middle of the keyboard, brightness scaled by its value. Throttled, so a CC sweep pulses rather than flooding. |
 | `Bend path` | Bend a key and the notes between it and the pitch you are bending to light up, brightest at the target. One path per held note, so a bent chord draws all of them. Needs `Send pitch bend` on in Keybed. |
-| `Waves` | A screensaver: slow swells along the keybed after the delay beside it, deep navy through blue to a pale crest. Any note stops it instantly. |
 | `Velocity brightness` | A held key's brightness follows how hard it was played. Needs `Incoming` and `Pressed` off, since those are applied on the device and override it. |
 
 All of these are computed in the plugin and composited over the colour table, so they work
 over an imported map.
+
+### Screensaver
+
+Runs when nothing has been played for the delay set beside it, and stops the instant a note
+arrives. It sits apart from the display effects because everything there reacts to playing
+and this one only runs when nothing is.
+
+| Pattern | What it does |
+| --- | --- |
+| `Waves` | Slow swells along the keybed, deep navy through blue to a pale crest. Two swells of different length and speed, so it never settles into an obvious repeat — one alone reads as a metronome. |
+| `Aurora` | Hue drifting along the keyboard rather than brightness: everything lit, nothing blinking. Green through blue through violet only; the full hue circle would bring the keyboard round to amber, which reads as a fault rather than an aurora. |
+| `Breathing` | Your painted colours, swelling up and down together. The map is kept, not replaced, so an imported keyswitch layout stays readable while the keyboard is idle. |
+| `Ember` | The same swell with a per-note phase offset, so the map shimmers rather than pulsing as one slab. |
+
+The first two replace the colour table until a note is played. The last two keep it and move
+only its brightness, never all the way to black — a map that went dark and came back would
+read as the plugin dropping out. The panel says which kind you have chosen.
 
 ### Keybed
 
