@@ -331,15 +331,71 @@ Paint the 128-note table by hand.
 | Picker | The colour everything in this section applies. |
 | `Single note` / `All octaves` | Whether clicking a key selects just it or every octave of that pitch class. |
 | Note field, `Set this note` | Colour one note by number, without hunting for it on screen. |
-| `Apply to N pressed notes` | Paint the picker colour onto whatever you are holding down, and leave those notes selected. The count is live and the button is disabled when nothing is held. Because it also sets the selection, you can hold a chord, press this once, then move the picker and use `Apply to selection` for each colour without replaying the chord. While `Incoming` is on a held key shows the highlight colour rather than its own, so the paint lands but is not visible until you let go — the button says so when that is the case. |
-| `Apply to selection` | Paint the picker colour onto the selected notes. |
-| `Pick from selection` | Load the first selected note's colour back into the picker. |
-| `Fill unselected` | Paint everything *except* the selection. One note red and the other 127 blue is two clicks. |
-| `Invert selection`, `Select all`, `Select none` | Selection. |
-| `Save map...` / `Load map...` | Saves the whole look of an instance to a file: the 128 note colours, every effect colour, and the settings that go with them — which effects are on, ripple speed and trail and colour source, afterglow decay, degree and tension strength, the screensaver pattern and its delay, brightness and unlit level. Not the port, the octave or anything else particular to this keyboard on this day, so a map opens the same on someone else's chain. Readable text, saved wherever you like; the dialog starts in Documents/LumiPaint but nothing depends on that. |
+| `Apply to N pressed notes` | Paint the picker colour onto whatever you are holding down, and leave those notes selected. The count is live and the button is disabled when nothing is held. Because it also sets the selection, you can hold a chord, press this once, then move the picker and use `Apply to sel.` for each colour without replaying the chord. While `Incoming` is on a held key shows the highlight colour rather than its own, so the paint lands but is not visible until you let go — the button says so when that is the case. |
+| `Apply to sel.` | Paint the picker colour onto the selected notes. |
+| `Pick from sel.` | Load the first selected note's colour back into the picker. |
+| `Fill unsel.` | Paint everything *except* the selection. One note red and the other 127 blue is two clicks. |
+| `Invert sel.`, `Select all`, `Select none` | Selection, by button rather than by keyboard. |
+| `Save...` / `Load...` | Saves the whole look of an instance to a file: the 128 note colours, every effect colour, and the settings that go with them — which effects are on, ripple speed and trail and colour source, afterglow decay, degree and tension strength, the screensaver pattern and its delay, brightness and unlit level. Not the port, the octave or anything else particular to this keyboard on this day, so a map opens the same on someone else's chain. Readable text, saved wherever you like; the dialog starts in Documents/LumiPaint but nothing depends on that. |
+| `Copy` / `Paste` | Copy the whole look to every other LumiPaint on the machine, and paste it into one. The payload is exactly what a map file holds, so a setting that saves is a setting that copies. Paste is greyed out until something has been copied. Goes through LumiPaint's own shared memory rather than the system clipboard — putting plugin state over whatever you had in there would be rude. |
 
-Alt-drag across the on-screen keyboard paints directly. Shift-click extends a selection,
-ctrl-click toggles one note.
+### Selecting keys
+
+Most of the painting above acts on a selection, so this is worth knowing first. Hovering
+any key shows the whole legend on its tooltip: it is the one place you are already
+looking when you want to know what a click will do.
+
+| On the keyboard | What it does |
+| --- | --- |
+| Click | Selects that key alone. With `All octaves` set, every octave of its pitch class. |
+| Shift-click | Extends the selection from the last key clicked. |
+| Ctrl-click | Adds or removes one key, so a scattered selection can be built by hand — every C, say — and a misclick taken straight back out. **Cmd-click on macOS.** |
+| Ctrl-A | Selects all 128 keys. **Cmd-A on macOS.** On Windows it applies only while the pointer is over the editor, so the DAW keeps its own select-all the rest of the time. |
+| Alt-drag | Paints with the picker colour as you go. Not selection — the one modifier here that changes colours rather than what is chosen. |
+
+A selection does not have to be a range. `Paint n` in the Gradient section spreads the
+stops across whatever is selected by position rather than by note number, so a scattered
+selection gets the whole gradient end to end.
+
+### Undo
+
+`<` and `>` in the top right corner, thirty steps.
+
+They cover the painted colours and only those: the generators, the gradient, apply to
+selection, alt-drag painting, importing a captured keybed, loading a map, pasting
+settings. An alt-drag across two octaves is one step rather than ninety — the snapshot
+is taken when the drag starts, not per key.
+
+Effect settings and output levels are deliberately outside it. Each is one control and
+trivially put back by hand, while a colour table is 128 decisions; an undo that moved
+sliders you never touched would be worse than none. Both arrows grey out when there is
+nothing to go back to, and the tooltip says how many steps are left.
+
+### Gradient
+
+A gradient of up to eight colour stops, painted across a selection rather than onto one
+note at a time. Select keys — see *Selecting keys* above — then press `Paint n`, and the
+stops spread evenly across them: deep blue at the bottom through to red at the top, or
+whatever you build.
+
+| Control | What it does |
+| --- | --- |
+| Colour swatches | One per stop. Click to edit. |
+| `n stops` | How many stops are in use, two to eight. |
+| `Reverse` | Flips the order, so a gradient built low-to-high can be dropped high-to-low without rebuilding it. |
+| `Paint n` | Spreads the gradient across the selected notes. Disabled with nothing selected. |
+
+Spread by position in the selection, not by note number — select every C and you get one
+stop per octave rather than a gradient squeezed into the span and sampled every twelve
+notes. The strip above the swatches is drawn by the same function that does the
+painting, so what you see is what lands on the keys.
+
+The gradient is saved with the instance, written into map files, and carried by `Copy`,
+so one built on a single track can be pasted across a whole project.
+
+It is not only for painting: `Gradient` is also a ripple colour source, which is the one
+source that reads nothing from the painted map. That makes it the way to get coloured
+waves over a blacked-out keyboard.
 
 ### Modes
 
@@ -348,8 +404,8 @@ first and paint individual notes afterwards.
 
 | Mode | What it does |
 | --- | --- |
-| `Chromatic wheel` | Hue by pitch class, so every C is one colour and every F# another. |
-| `Circle of fifths` | Hue by position in the circle, so harmonically related keys sit near each other. |
+| `Wheel` | Hue by pitch class, so every C is one colour and every F# another. |
+| `Fifths` | Hue by position in the circle, so harmonically related keys sit near each other. |
 | `Piano` | White keys white, black keys off. |
 | `Blackout` | Everything off, as a starting point for painting by hand. |
 
@@ -426,11 +482,12 @@ and afterglow still read over it.
 | Control | What it does |
 | --- | --- |
 | `Ripple` | A struck key sends a wave along the keybed. `Speed` is how fast, `Trail` how many keys it keeps burning behind the front. Twelve can run at once. |
-| ripple colour | Where a wave takes its colour, worked out once when it starts. `Fixed` is the swatch. `Wheel` is hue by pitch class, `Fifths` hue by position in the circle of fifths, so harmonically close notes throw similar waves. `Degree` uses the degree colour of the note played. `Map` carries the colour of the key it came from, which over an imported keyswitch layout means a switch throws a wave in its own colour. |
+| ripple colour | Where a wave takes its colour, worked out once when it starts. `Fixed` is the swatch. `Wheel` is hue by pitch class, `Fifths` hue by position in the circle of fifths, so harmonically close notes throw similar waves. `Degree` uses the degree colour of the note played. `Map` carries the colour of the key it came from, which over an imported keyswitch layout means a switch throws a wave in its own colour. `Gradient` takes the paint gradient by where the note sits across the keys the device is showing — low notes from one end, high notes from the other. It reads nothing from the map, so unlike the others it still gives coloured waves over `Blackout`, and over `Wheel`, `Fifths` or `Piano` the wave no longer matches the key it came from and is far easier to follow. |
 | `Afterglow` | A struck key holds this colour and fades back over `Decay`. Brightness follows velocity. |
 | `Beat pulse` | Flashes on the beat, brighter on the downbeat, from the host transport. Nothing happens when the transport is stopped. |
 | `Chord halo` | With two or more notes held, the same pitch classes light in the other octaves. A single note is ignored. |
-| `Splash` | A chosen CC fires a wave from the middle of the keyboard, brightness scaled by its value. Throttled, so a CC sweep pulses rather than flooding. |
+| `Splash` | A chosen CC fires a wave from the middle of the instrument, brightness scaled by its value. Throttled, so a CC sweep pulses rather than flooding. The origin is taken from the blocks themselves, not from the MIDI range: one block splashes from its own centre, a chained pair from the join between them. Blocks given their own octaves are handled too — the midpoint can then fall in the gap between them, so the wave arrives at each block's inner edge at the same moment and the pair lights symmetrically. |
+| `Sustain` | Shows what the pedal is holding. A note released while CC 64 is down stays lit, because it is still sounding, and carries the sustain tint so you can tell it from a key under your finger. The whole sustained chord goes out together when the pedal rises, which is what makes a pedal lift visible. Off by default — the pedal changing the picture is a surprise unless it was asked for. |
 | `Bend path` | Bend a key and the notes between it and the pitch you are bending to light up, brightest at the target. One path per held note, so a bent chord draws all of them. Needs `Send pitch bend` on in Keybed. |
 | `Velocity brightness` | A held key's brightness follows how hard it was played. Needs `Incoming` and `Pressed` off, since those are applied on the device and override it. |
 
@@ -446,12 +503,15 @@ and this one only runs when nothing is.
 | Pattern | What it does |
 | --- | --- |
 | `Waves` | Slow swells along the keybed, deep navy through blue to a pale crest. Two swells of different length and speed, so it never settles into an obvious repeat — one alone reads as a metronome. |
-| `Aurora` | Hue drifting along the keyboard rather than brightness: everything lit, nothing blinking. Green through blue through violet only; the full hue circle would bring the keyboard round to amber, which reads as a fault rather than an aurora. |
-| `Breathing` | Your painted colours, swelling up and down together. The map is kept, not replaced, so an imported keyswitch layout stays readable while the keyboard is idle. |
-| `Ember` | The same swell with a per-note phase offset, so the map shimmers rather than pulsing as one slab. |
+| `Aurora` | Hue drifting along the keyboard rather than brightness: everything lit, nothing blinking. Green through teal and blue to violet; the full hue circle would bring the keyboard round to amber, which reads as a fault rather than an aurora. A cycle spans about forty keys, so a two-octave block shows roughly half the palette at once and neighbouring keys are always close in colour. |
+| `Breathing` | Your painted colours, swelling up and down together. The map is kept, not replaced, so an imported keyswitch layout stays readable while the keyboard is idle. It is sent as a single controller message rather than by repainting the keys — the device already has an unlit level, and this swells it — so it costs no note bandwidth at all and a key under your finger stays at full brightness while everything around it breathes. It scales the `Unlit level` you set rather than overriding it, so that slider stays the ceiling. |
+| `Ember` | The same swell with a per-note phase offset, so the map shimmers rather than pulsing as one slab. A hundred and twenty-eight different phases cannot be one controller value, so unlike `Breathing` this one does repaint the keys and costs what the other patterns cost. |
+| `Gradient drift` | Your paint gradient scrolling along the keybed. The only pattern whose palette is yours rather than chosen for you — change the gradient and the screensaver changes with it. The stops are read as a loop, so the last blends back round to the first and the drift travels one way for ever with no seam. |
+| `Rainfall` | Keys lighting one at a time and fading, nothing else lit — about one key in five at any moment. The only pattern with no continuous field, so it is the quiet one, and the cheapest: only the handful currently fading need resending. Each key keeps its own interval and its own colour from the gradient, so the keyboard has a consistent character rather than flickering through the whole palette. Looks best over `Blackout`. |
 
-The first two replace the colour table until a note is played. The last two keep it and move
-only its brightness, never all the way to black — a map that went dark and came back would
+`Waves`, `Aurora`, `Gradient drift` and `Rainfall` replace the colour table until a note
+is played. `Breathing` and `Ember` keep it and move only its brightness, never all the way
+to black — a map that went dark and came back would
 read as the plugin dropping out. The panel says which kind you have chosen.
 
 ### Keybed

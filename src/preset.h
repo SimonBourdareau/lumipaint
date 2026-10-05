@@ -47,6 +47,20 @@ struct PresetIO
     static bool load (const std::string &path, LumiLink &link,
                       double &brightness, double &unlitLevel);
 
+    /*
+        The same map, as text rather than as a file.
+
+        Copying settings between instances and writing a .lumimap are the same job with
+        different destinations, so they are the same code: the file versions above now
+        wrap these. One format, one parser, and a field added to a map is a field that
+        copies between instances too, with nothing else to remember.
+    */
+    static std::string toText (const LumiLink &link,
+                               double brightness, double unlitLevel);
+
+    static bool fromText (const std::string &text, LumiLink &link,
+                          double &brightness, double &unlitLevel);
+
     /* Native dialogs. Return an empty string if the user cancelled. */
     static std::string askForSavePath();
     static std::string askForOpenPath();

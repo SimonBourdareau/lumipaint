@@ -263,16 +263,18 @@ std::string PresetIO::askForOpenPath()
 #endif
 }
 
-bool PresetIO::save (const std::string &path, const LumiLink &link,
-                     double brightness, double unlitLevel)
-{
-    std::ofstream out (path.c_str());
+/*
+    The map as text, which is the only place the format is written down.
 
-    if (! out)
-    {
-        setError ("could not write that file");
-        return false;
-    }
+    save() below is a four-line wrapper around this, and so is the clipboard. A field
+    added here reaches a .lumimap file and a copy-paste between instances at the same
+    time, which is the point: two writers of one format drift, and the drift shows up as
+    a setting that survives a save but not a paste.
+*/
+std::string PresetIO::toText (const LumiLink &link,
+                              double brightness, double unlitLevel)
+{
+    std::ostringstream out;
 
     out << "lumipaint-map 1\n";
     out << "# one line per note: note number, then rrggbb\n";
@@ -302,6 +304,7 @@ bool PresetIO::save (const std::string &path, const LumiLink &link,
     out << "afterglow-colour " << hex (link.getAfterglowColour()) << '\n';
     out << "pulse-colour " << hex (link.getPulseColour()) << '\n';
     out << "halo-colour " << hex (link.getHaloColour()) << '\n';
+    out << "sustain-colour " << hex (link.getSustainColour()) << '\n';
     out << "tension-home " << hex (link.getTensionHome()) << '\n';
     out << "tension-far " << hex (link.getTensionFar()) << '\n';
 
@@ -326,6 +329,7 @@ bool PresetIO::save (const std::string &path, const LumiLink &link,
     out << "afterglow-decay " << link.getAfterglowDecay() << '\n';
     out << "pulse " << (link.getPulseEnabled() ? 1 : 0) << '\n';
     out << "halo " << (link.getHaloEnabled() ? 1 : 0) << '\n';
+    out << "sustain " << (link.getSustainEnabled() ? 1 : 0) << '\n';
     out << "degrees " << (link.getDegreeEnabled() ? 1 : 0) << '\n';
     out << "degrees-strength " << link.getDegreeAlpha() << '\n';
     out << "tension " << (link.getTensionEnabled() ? 1 : 0) << '\n';
@@ -333,6 +337,10 @@ bool PresetIO::save (const std::string &path, const LumiLink &link,
     out << "waves " << (link.getWavesEnabled() ? 1 : 0) << '\n';
     out << "waves-delay " << link.getWavesDelay() << '\n';
     out << "waves-mode " << link.getWavesMode() << '\n';
+    out << "gradient-count " << link.getGradientCount() << '\n';
+
+    for (int i = 0; i < kGradientStops; ++i)
+        out << "gradient " << i << ' ' << hex (link.getGradientStop (i)) << '\n';
     out << "bend-path " << (link.getBendPathEnabled() ? 1 : 0) << '\n';
     out << "velocity " << (link.getVelocityEnabled() ? 1 : 0) << '\n';
     out << "bend-scale " << link.getBendFullScale() << '\n';
@@ -340,6 +348,21 @@ bool PresetIO::save (const std::string &path, const LumiLink &link,
     out << "brightness " << brightness << '\n';
     out << "unlit " << unlitLevel << '\n';
 
+    return out.str();
+}
+
+bool PresetIO::save (const std::string &path, const LumiLink &link,
+                     double brightness, double unlitLevel)
+{
+    std::ofstream out (path.c_str());
+
+    if (! out)
+    {
+        setError ("could not write that file");
+        return false;
+    }
+
+    out << toText (link, brightness, unlitLevel);
     setError ("");
     return out.good();
 }
@@ -354,6 +377,16 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
         setError ("could not read that file");
         return false;
     }
+
+    std::ostringstream whole;
+    whole << in.rdbuf();
+    return fromText (whole.str(), link, brightness, unlitLevel);
+}
+
+bool PresetIO::fromText (const std::string &text, LumiLink &link,
+                         double &brightness, double &unlitLevel)
+{
+    std::istringstream in (text);
 
     std::string first;
     std::getline (in, first);
@@ -384,6 +417,13 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
             if (note >= 0 && note < 128)
                 link.setColour (note, unhex (colour));
         }
+        else if (key == "gradient")
+        {
+            int index = -1;
+            std::string colour;
+            parts >> index >> colour;
+            link.setGradientStop (index, unhex (colour));
+        }
         else if (key == "degree")
         {
             int index = -1;
@@ -401,6 +441,7 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
         else if (key == "afterglow-decay") { int v; parts >> v; link.setAfterglowDecay (v); }
         else if (key == "pulse") { int v; parts >> v; link.setPulseEnabled (v != 0); }
         else if (key == "halo") { int v; parts >> v; link.setHaloEnabled (v != 0); }
+        else if (key == "sustain") { int v; parts >> v; link.setSustainEnabled (v != 0); }
         else if (key == "degrees") { int v; parts >> v; link.setDegreeEnabled (v != 0); }
         else if (key == "degrees-strength") { int v; parts >> v; link.setDegreeAlpha (v); }
         else if (key == "tension") { int v; parts >> v; link.setTensionEnabled (v != 0); }
@@ -408,6 +449,7 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
         else if (key == "waves") { int v; parts >> v; link.setWavesEnabled (v != 0); }
         else if (key == "waves-delay") { int v; parts >> v; link.setWavesDelay (v); }
         else if (key == "waves-mode") { int v; parts >> v; link.setWavesMode (v); }
+        else if (key == "gradient-count") { int v; parts >> v; link.setGradientCount (v); }
         else if (key == "bend-path") { int v; parts >> v; link.setBendPathEnabled (v != 0); }
         else if (key == "velocity") { int v; parts >> v; link.setVelocityEnabled (v != 0); }
         else if (key == "bend-scale") { int v; parts >> v; link.setBendFullScale (v); }
@@ -434,6 +476,7 @@ bool PresetIO::load (const std::string &path, LumiLink &link,
             else if (key == "afterglow-colour") link.setAfterglowColour (rgb);
             else if (key == "pulse-colour") link.setPulseColour (rgb);
             else if (key == "halo-colour") link.setHaloColour (rgb);
+            else if (key == "sustain-colour") link.setSustainColour (rgb);
             else if (key == "tension-home") link.setTensionHome (rgb);
             else if (key == "tension-far") link.setTensionFar (rgb);
         }

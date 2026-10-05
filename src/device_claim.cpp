@@ -20,6 +20,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <cstring>
 
 #if defined (_WIN32)
  #include <windows.h>
@@ -47,11 +49,36 @@ struct DeviceClaim::Shared
     /* Top bit marks an entry as written, so an untouched table is not mistaken for a
        device showing black. */
     std::atomic<uint32_t> deviceColour[128];
+
+    /*
+        One clipboard, shared by every instance on the machine.
+
+        Copying a look from one track to another had no route that did not go through a
+        file: save a map, find it again, load it. The text here is exactly what a
+        .lumimap holds, so it is written and read by the same two functions - a format
+        that gains a field gains it here at the same moment, with nothing to keep in
+        step.
+
+        The sequence number is what makes the paste button know there is something to
+        paste, and the length is stored rather than relying on a terminator, because a
+        reader can arrive while a writer is partway through.
+    */
+    std::atomic<uint32_t> clipSeq;
+    std::atomic<uint32_t> clipLength;
+    char clipText[kClipBytes];
 };
 
 namespace {
 
-const uint32_t kMagic = 0x4c554d43;
+/*
+    Bumped when the shared block grew a clipboard.
+
+    The block outlives every process that uses it, so an instance built before the
+    clipboard existed and one built after would otherwise map the same memory with two
+    different ideas of its shape. A new magic means the first instance to notice
+    reinitialises it, which costs one forgotten ownership record and nothing else.
+*/
+const uint32_t kMagic = 0x4c554d44;
 
 /* How long an owner may go without renewing before another instance may take the
    keyboard. The worker renews on every tick, so this is orders of magnitude longer
@@ -106,6 +133,9 @@ DeviceClaim::DeviceClaim()
 
         for (int i = 0; i < 128; ++i)
             state->deviceColour[i].store (0, std::memory_order_relaxed);
+
+        state->clipSeq.store (0, std::memory_order_relaxed);
+        state->clipLength.store (0, std::memory_order_relaxed);
 
         state->magic.store (kMagic, std::memory_order_release);
     }
@@ -169,6 +199,9 @@ DeviceClaim::DeviceClaim()
 
         for (int i = 0; i < 128; ++i)
             state->deviceColour[i].store (0, std::memory_order_relaxed);
+
+        state->clipSeq.store (0, std::memory_order_relaxed);
+        state->clipLength.store (0, std::memory_order_relaxed);
 
         state->magic.store (kMagic, std::memory_order_release);
     }
@@ -385,6 +418,53 @@ void DeviceClaim::forgetDeviceState()
 uint32_t DeviceClaim::ownerId() const
 {
     return state != nullptr ? state->owner.load (std::memory_order_acquire) : myId;
+}
+
+
+/*
+    Written length last, so a reader never sees a length that outruns the text.
+
+    The sequence is bumped first and the length set at the end, which means the window
+    where a reader could catch a half-written clipboard shows a length of zero rather
+    than a plausible-looking number pointing at stale bytes. There is no lock here and
+    there does not need to be: pasting a look is a thing a person does once in a while,
+    and the cost of losing a race is one empty paste.
+*/
+bool DeviceClaim::writeClipboard (const std::string &text)
+{
+    if (state == nullptr)
+        return false;
+
+    if (text.size() >= (size_t) kClipBytes)
+        return false;
+
+    state->clipLength.store (0, std::memory_order_release);
+    state->clipSeq.fetch_add (1, std::memory_order_acq_rel);
+
+    std::memcpy (state->clipText, text.data(), text.size());
+    state->clipText[text.size()] = '\0';
+
+    state->clipLength.store ((uint32_t) text.size(), std::memory_order_release);
+    return true;
+}
+
+bool DeviceClaim::readClipboard (std::string &text) const
+{
+    if (state == nullptr)
+        return false;
+
+    const uint32_t length = state->clipLength.load (std::memory_order_acquire);
+
+    if (length == 0 || length >= (uint32_t) kClipBytes)
+        return false;
+
+    text.assign (state->clipText, length);
+    return true;
+}
+
+uint32_t DeviceClaim::clipboardSeq() const
+{
+    return state != nullptr ? state->clipSeq.load (std::memory_order_acquire) : 0u;
 }
 
 }

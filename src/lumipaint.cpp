@@ -347,6 +347,21 @@ LumiLink::LumiLink()
     wavesEnabled.store (0, std::memory_order_relaxed);
     wavesDelay.store (60, std::memory_order_relaxed);
     wavesMode.store (0, std::memory_order_relaxed);
+    sustainHeld.store (0, std::memory_order_relaxed);
+    sustainEnabled.store (0, std::memory_order_relaxed);
+    sustainColour.store (0x3cff9a, std::memory_order_relaxed);
+
+    /* A default worth looking at rather than a row of black: deep blue to orange is
+       readable across a keybed and makes the feature explain itself the first time
+       anyone presses the button. */
+    gradientCount.store (4, std::memory_order_relaxed);
+    gradientStops[0].store (0x1f3dff, std::memory_order_relaxed);
+    gradientStops[1].store (0x00c4ff, std::memory_order_relaxed);
+    gradientStops[2].store (0xffd400, std::memory_order_relaxed);
+    gradientStops[3].store (0xff3d1f, std::memory_order_relaxed);
+
+    for (int i = 4; i < kGradientStops; ++i)
+        gradientStops[i].store (0xffffff, std::memory_order_relaxed);
     idleMs.store (0, std::memory_order_relaxed);
     wavePhase = 0;
 
@@ -532,12 +547,71 @@ uint32_t LumiLink::getColour (int note) const
     return baseColour[note].load (std::memory_order_relaxed);
 }
 
+/*
+    The breath, 60..255, or 255 when breathing is not running.
+
+    One function because two things need the same number: the controller message that
+    makes the hardware do it, and the editor's keyboard, which would otherwise sit
+    perfectly still while the device swelled. A preview that disagrees with the device
+    is worse than no preview.
+*/
+void LumiLink::setSustain (bool down)
+{
+    sustainHeld.store (down ? 1 : 0, std::memory_order_relaxed);
+}
+
+bool LumiLink::getSustainDown() const
+{
+    return sustainHeld.load (std::memory_order_relaxed) != 0;
+}
+
+void LumiLink::setSustainEnabled (bool on)
+{
+    sustainEnabled.store (on ? 1 : 0, std::memory_order_relaxed);
+}
+
+bool LumiLink::getSustainEnabled() const
+{
+    return sustainEnabled.load (std::memory_order_relaxed) != 0;
+}
+
+void LumiLink::setSustainColour (uint32_t rgb)
+{
+    sustainColour.store (rgb & 0x00ffffffu, std::memory_order_relaxed);
+}
+
+uint32_t LumiLink::getSustainColour() const
+{
+    return sustainColour.load (std::memory_order_relaxed);
+}
+
+int LumiLink::breathLevel() const
+{
+    if (! wavesRunning() || wavesMode.load (std::memory_order_relaxed) != 2)
+        return 255;
+
+    const int phase = ((wavePhase / 26) % 360 + 360) % 360;
+    const int tri = phase < 180 ? phase : 360 - phase;
+    return 60 + (tri * 195) / 180;
+}
+
 uint32_t LumiLink::getDisplayColour (int note) const
 {
     if (note < 0 || note > 127)
         return 0;
 
-    return desiredColour[note].load (std::memory_order_relaxed);
+    const uint32_t rgb = desiredColour[note].load (std::memory_order_relaxed);
+    const int breath = breathLevel();
+
+    if (breath >= 255 || isNoteSounding (note))
+        return rgb;
+
+    /* A key being played stays at full, exactly as the firmware leaves it. */
+    const uint32_t r = (((rgb >> 16) & 0xffu) * (uint32_t) breath) / 255u;
+    const uint32_t g = (((rgb >> 8) & 0xffu) * (uint32_t) breath) / 255u;
+    const uint32_t b = ((rgb & 0xffu) * (uint32_t) breath) / 255u;
+
+    return (r << 16) | (g << 8) | b;
 }
 
 void LumiLink::setRippleEnabled (bool on)
@@ -704,6 +778,65 @@ void LumiLink::triggerSplash (int level)
         level = 255;
 
     pendingSplashLevel.store (level, std::memory_order_release);
+}
+
+/*
+    Where a splash starts.
+
+    It was note 60, which is the middle of the MIDI range and almost never the middle of
+    anything the keyboard is showing. On a two-octave Piano M starting at C2 the wave
+    began off the top of the keys, so half of it never appeared and what did arrive came
+    in from one edge - which looks like a bug rather than a splash.
+
+    Taken from the blocks themselves rather than from the window, because the window is
+    computed as blocks * 24 keys from one base and only describes a contiguous cluster.
+    Blocks that have been given their own octaves report their own bases, and the point
+    halfway between the bottom of the lowest and the top of the highest is the middle of
+    the instrument in both cases. When they are not contiguous that point can land in the
+    gap between them, which is right: the wave then reaches each block's inner edge at
+    the same moment and the pair lights symmetrically.
+*/
+int LumiLink::splashOrigin() const
+{
+    const int blocks = blockCount.load (std::memory_order_relaxed);
+
+    int lowest = -1;
+    int highest = -1;
+
+    for (int i = 0; i < blocks && i < 5; ++i)
+    {
+        const int base = blockLow[i].load (std::memory_order_relaxed);
+
+        if (base < 0)
+            continue;
+
+        if (lowest < 0 || base < lowest)
+            lowest = base;
+
+        if (highest < 0 || base > highest)
+            highest = base;
+    }
+
+    if (lowest < 0 || highest < 0)
+    {
+        /* Nothing has reported yet, so fall back to the window - which before any
+           device is seen is the whole range, and 60 again. */
+        lowest = windowLow.load (std::memory_order_relaxed);
+        highest = windowHigh.load (std::memory_order_relaxed) - 23;
+
+        if (highest < lowest)
+            highest = lowest;
+    }
+
+    int centre = (lowest + (highest + 23)) / 2;
+
+    if (centre < 0)
+        centre = 0;
+
+    if (centre > 127)
+        centre = 127;
+
+    return centre;
 }
 
 void LumiLink::setAfterglowEnabled (bool on)
@@ -921,7 +1054,7 @@ int LumiLink::getWavesDelay() const
 
 void LumiLink::setWavesMode (int mode)
 {
-    if (mode < 0 || mode > 3)
+    if (mode < 0 || mode > 5)
         mode = 0;
 
     wavesMode.store (mode, std::memory_order_relaxed);
@@ -930,6 +1063,98 @@ void LumiLink::setWavesMode (int mode)
 int LumiLink::getWavesMode() const
 {
     return wavesMode.load (std::memory_order_relaxed);
+}
+
+bool LumiLink::writeClipboard (const std::string &text)
+{
+    return claim.writeClipboard (text);
+}
+
+bool LumiLink::readClipboard (std::string &text) const
+{
+    return claim.readClipboard (text);
+}
+
+void LumiLink::setGradientStop (int index, uint32_t rgb)
+{
+    if (index < 0 || index >= kGradientStops)
+        return;
+
+    gradientStops[index].store (rgb & 0x00ffffffu, std::memory_order_relaxed);
+}
+
+uint32_t LumiLink::getGradientStop (int index) const
+{
+    if (index < 0 || index >= kGradientStops)
+        return 0;
+
+    return gradientStops[index].load (std::memory_order_relaxed);
+}
+
+void LumiLink::setGradientCount (int count)
+{
+    if (count < 2)
+        count = 2;
+
+    if (count > kGradientStops)
+        count = kGradientStops;
+
+    gradientCount.store (count, std::memory_order_relaxed);
+}
+
+int LumiLink::getGradientCount() const
+{
+    const int count = gradientCount.load (std::memory_order_relaxed);
+    return count < 2 ? 2 : (count > kGradientStops ? kGradientStops : count);
+}
+
+/*
+    The colour at a point along the gradient.
+
+    Interpolated per channel between the two stops either side, which is wrong in the
+    way every RGB interpolation is wrong - blue to yellow passes through a muddy grey
+    rather than through green - and right in the way that matters here, which is that
+    the stops are the colours the user picked and the ramp between them is predictable.
+    Anything cleverer would mean the keyboard showing hues that are in no stop.
+*/
+uint32_t LumiLink::gradientAt (float position) const
+{
+    const int count = getGradientCount();
+
+    if (position <= 0.0f)
+        return getGradientStop (0);
+
+    if (position >= 1.0f)
+        return getGradientStop (count - 1);
+
+    const float scaled = position * (float) (count - 1);
+    int lower = (int) scaled;
+
+    if (lower > count - 2)
+        lower = count - 2;
+
+    const float blend = scaled - (float) lower;
+    const uint32_t a = getGradientStop (lower);
+    const uint32_t b = getGradientStop (lower + 1);
+
+    uint32_t out = 0;
+
+    for (int shift = 16; shift >= 0; shift -= 8)
+    {
+        const float channelA = (float) ((a >> shift) & 0xffu);
+        const float channelB = (float) ((b >> shift) & 0xffu);
+        int value = (int) (channelA + (channelB - channelA) * blend + 0.5f);
+
+        if (value < 0)
+            value = 0;
+
+        if (value > 255)
+            value = 255;
+
+        out |= (uint32_t) value << shift;
+    }
+
+    return out;
 }
 
 bool LumiLink::wavesRunning() const
@@ -1123,7 +1348,9 @@ void LumiLink::advanceRipples (int elapsedMs)
     if (splashLevel > 0)
     {
         splashCooldown = 160;
-        const uint32_t packed = 0xc0000000u | (60u << 8) | (uint32_t) (splashLevel & 0xff);
+        const uint32_t packed = 0xc0000000u
+                              | ((uint32_t) (splashOrigin() & 0x7f) << 8)
+                              | (uint32_t) (splashLevel & 0xff);
         const uint32_t slot = triggerWrite.fetch_add (1, std::memory_order_relaxed);
         triggerRing[slot % kTriggerSlots].store (packed, std::memory_order_release);
     }
@@ -1207,6 +1434,33 @@ void LumiLink::advanceRipples (int elapsedMs)
                 case kRippleMap:
                     rippleTint[slot] = baseColour[note & 127].load (std::memory_order_relaxed);
                     break;
+
+                case kRippleGradient:
+                {
+                    /*
+                        Positioned across the keys the device is actually showing, not
+                        across all 128.
+
+                        A Piano M covers two octaves, so spreading the gradient over the
+                        full MIDI range would give it a narrow slice of one colour and
+                        the ripples would all look the same. Measured against the window
+                        instead, the whole gradient is reachable from the keys under
+                        your hands.
+                    */
+                    const int low = windowLow.load (std::memory_order_relaxed);
+                    const int high = windowHigh.load (std::memory_order_relaxed);
+                    const int span = high > low ? high - low : 127;
+                    int offset = note - low;
+
+                    if (offset < 0)
+                        offset = 0;
+
+                    if (offset > span)
+                        offset = span;
+
+                    rippleTint[slot] = gradientAt ((float) offset / (float) span);
+                    break;
+                }
 
                 default:
                     rippleTint[slot] = rippleColour.load (std::memory_order_relaxed);
@@ -1303,6 +1557,12 @@ void LumiLink::compositeColours()
     const uint32_t farTint = tensionFar.load (std::memory_order_relaxed);
     const int velocityOn = velocityEnabled.load (std::memory_order_relaxed);
     const bool wavesOn = wavesRunning();
+
+    const bool sustainOn = sustainEnabled.load (std::memory_order_relaxed) != 0
+                        && sustainHeld.load (std::memory_order_relaxed) != 0;
+    const uint32_t sustainTint = sustainColour.load (std::memory_order_relaxed);
+    const uint64_t sustainMask[2] = { sustainBits[0].load (std::memory_order_relaxed),
+                                      sustainBits[1].load (std::memory_order_relaxed) };
     const int wavesWhich = wavesMode.load (std::memory_order_relaxed);
     const int bendPathOn = bendPathEnabled.load (std::memory_order_relaxed);
     const uint32_t bendPathTint = bendPathColour.load (std::memory_order_relaxed);
@@ -1450,60 +1710,323 @@ void LumiLink::compositeColours()
                     Aurora: hue drifting along the keyboard, everything lit, nothing
                     blinking.
 
-                    Three slow sines of different period beat against each other to
-                    place the hue, so the pattern never settles into a repeat the eye
-                    can follow - the same reason waves uses two rather than one. The
-                    hue is what moves; brightness stays high and nearly flat, which is
-                    what separates this from waves at a glance.
+                    Interpolated through a palette rather than built from bands. The
+                    first version divided the hue into six bands and ramped a fraction
+                    inside each, but the colour branches changed only twice in those six
+                    - so within a branch the fraction climbed to full, reset to zero and
+                    climbed again, and the keyboard showed a sawtooth. Three visible
+                    steps across the keybed, which is what a continuous drift must not
+                    have.
+
+                    The position is smoothstepped before use. A plain triangle wave has
+                    a corner at its apex, and a corner in a slow drift reads as a crease
+                    travelling along the keys; easing it at both ends turns the fold
+                    into a turn.
                 */
-                const int h = ((note * 9 + wavePhase / 29) % 360 + 360) % 360;
-                const int k = ((note * 4 - wavePhase / 53) % 360 + 360) % 360;
-
-                const int th = h < 180 ? h : 360 - h;
-                const int tk = k < 180 ? k : 360 - k;
-
-                const int hue = (th * 2 + tk) / 3;
-                const int band = hue * 6 / 180;
-                const int frac = (hue * 6 - band * 180) * 255 / 180;
-
-                int r = 0, g = 0, b = 0;
+                static const uint32_t palette[5] = { 0x1fd45a, 0x00d4b4, 0x00a8ff,
+                                                     0x2a4aff, 0x8a3dff };
 
                 /*
-                    Green through blue through violet only.
+                    A cycle spans about forty keys, not three.
 
-                    The full hue circle would bring the keyboard round to red and amber,
-                    which reads as a fault rather than an aurora - the same reason the
-                    waves ramp has no red in it at all.
+                    This is the number that decides whether it reads as a drift or as
+                    noise: at a third of a cycle per key the palette repeats every
+                    couple of keys and neighbouring keys land on unrelated colours, so
+                    smoothing the curve buys nothing. Forty keys to a cycle means a
+                    two-octave block shows about half the palette at once and adjacent
+                    keys are always close.
                 */
-                if (band <= 1)      { r = 0;          g = 200;        b = 40 + frac * 2 / 3; }
-                else if (band <= 3) { r = frac / 6;   g = 200 - frac / 2; b = 215; }
-                else                { r = 40 + frac / 3; g = 40;      b = 215 - frac / 4; }
+                const float t = (float) wavePhase * 0.001f;
+                const float first = (float) note * 0.025f + t * 0.055f;
+                const float second = (float) note * 0.011f - t * 0.031f;
 
-                const int lift = 190 + (tk * 65) / 180;
+                /* Two folds of different period beating against each other, so the
+                   pattern never settles into a repeat the eye can follow. */
+                float a = first - (float) (int) first;
+                float b = second - (float) (int) second;
 
-                r = r * lift / 255;
-                g = g * lift / 255;
-                b = b * lift / 255;
+                if (a < 0.0f) a += 1.0f;
+                if (b < 0.0f) b += 1.0f;
 
-                result = ((uint32_t) (r & 0xff) << 16)
-                       | ((uint32_t) (g & 0xff) << 8)
-                       |  (uint32_t) (b & 0xff);
+                a = a < 0.5f ? a * 2.0f : (1.0f - a) * 2.0f;
+                b = b < 0.5f ? b * 2.0f : (1.0f - b) * 2.0f;
+
+                a = a * a * (3.0f - 2.0f * a);
+                b = b * b * (3.0f - 2.0f * b);
+
+                float position = (a * 2.0f + b) / 3.0f;
+
+                if (position < 0.0f) position = 0.0f;
+                if (position > 1.0f) position = 1.0f;
+
+                const float scaled = position * 4.0f;
+                int lower = (int) scaled;
+
+                if (lower > 3)
+                    lower = 3;
+
+                const float blend = scaled - (float) lower;
+                const uint32_t from = palette[lower];
+                const uint32_t to = palette[lower + 1];
+
+                uint32_t out = 0;
+
+                for (int shift = 16; shift >= 0; shift -= 8)
+                {
+                    const float channelA = (float) ((from >> shift) & 0xffu);
+                    const float channelB = (float) ((to >> shift) & 0xffu);
+                    int value = (int) (channelA + (channelB - channelA) * blend + 0.5f);
+
+                    if (value < 0) value = 0;
+                    if (value > 255) value = 255;
+
+                    out |= (uint32_t) value << shift;
+                }
+
+                result = out;
             }
-            else if (wavesWhich == 2 || wavesWhich == 3)
+            else if (wavesWhich == 2)
             {
                 /*
-                    Breathing, and ember.
+                    Breathing paints nothing here, deliberately.
 
-                    Breathing swells the whole map together. Ember is the same swell
-                    with a per-note phase offset, so the map shimmers rather than
-                    pulsing as one slab - one constant apart, which is why they share
-                    this branch rather than being written twice.
+                    The swell is one controller message that the firmware applies to the
+                    whole keyboard, so this path leaves the painted map exactly as it
+                    found it. Without this branch mode 2 fell through to the waves case
+                    below and the keyboard showed waves with a breath on top - which is
+                    what happened when the controller route was added and this was not
+                    written.
+                */
+            }
+            else if (wavesWhich == 4)
+            {
+                /*
+                    The paint gradient, scrolling along the keys.
+
+                    Every other pattern has its palette decided here - waves is blue,
+                    aurora green through violet, breathing and ember borrow the map. This
+                    one is the only screensaver that shows the colours you chose, which
+                    is most of the reason to have it.
+
+                    Folded, not wrapped. Wrapping looks like the obvious choice and is
+                    wrong: a gradient's two ends are whatever colours you picked and
+                    have no reason to match, so repeating it puts a hard edge between
+                    the last stop and the first, and that edge travels along the keys.
+                    Folding runs the gradient up and back instead, which has no seam
+                    anywhere - the turn happens at a stop, where the colour is already
+                    standing still.
+
+                    Roughly forty keys to a sweep, the same spacing aurora settled on.
+                */
+                float position = (float) note * 0.0125f - (float) wavePhase * 0.000045f;
+                position -= (float) (int) position;
+
+                if (position < 0.0f)
+                    position += 1.0f;
+
+                /* 0..1..0 rather than 0..1 then back to 0. */
+                position = position < 0.5f ? position * 2.0f : (1.0f - position) * 2.0f;
+
+                result = gradientAt (position);
+            }
+            else if (wavesWhich == 5)
+            {
+                /*
+                    Rainfall: single keys lighting and fading, nothing else.
+
+                    The only pattern here with no continuous field, so it needs no
+                    phase - each key's brightness is a function of how long ago it was
+                    struck, and a key is struck by a hash of its number and the current
+                    second coming up with the right answer. That keeps it stateless:
+                    no array of drops to advance, no allocation, and every instance
+                    showing the same keyboard agrees without talking to anything.
+
+                    The colour comes from the gradient too, by where the drop landed, so
+                    rain over a warm gradient is embers and over a cool one is rain.
+                */
+                const int tick = wavePhase / 90;
+                uint32_t best = 0;
+                int brightest = 0;
+
+                /* Three recent ticks are enough for a tail: a drop is faded out well
+                   before the fourth would matter. */
+                for (int back = 0; back < 10; ++back)
+                {
+                    const int when = tick - back;
+
+                    /* A cheap integer hash. Any note and tick either agree or they do
+                       not; the point is only that the answer looks unrelated to both. */
+                    uint32_t h = (uint32_t) (note * 2654435761u) ^ (uint32_t) (when * 40503u);
+                    h ^= h >> 13;
+                    h *= 1274126177u;
+                    h ^= h >> 16;
+
+                    /*
+                        The density, which is the whole character of it.
+
+                        Tail length and this number have to agree: ten ticks of fade at
+                        one in twenty-three put roughly ten of a block's twenty-four
+                        keys alight at once, which is static rather than rain. One in
+                        seventy-nine leaves about three on a single block and six across
+                        a chained pair - sparse enough that each drop is a thing you
+                        watch land.
+                    */
+                    if ((h % 79u) != 0u)
+                        continue;
+
+                    const int level = 255 - back * 26;
+
+                    if (level > brightest)
+                    {
+                        brightest = level;
+                        best = gradientAt ((float) ((h >> 8) % 1000u) / 1000.0f);
+                    }
+                }
+
+                if (brightest <= 0)
+                {
+                    result = 0;
+                }
+                else
+                {
+                    const uint32_t r = (((best >> 16) & 0xffu) * (uint32_t) brightest) / 255u;
+                    const uint32_t g = (((best >> 8) & 0xffu) * (uint32_t) brightest) / 255u;
+                    const uint32_t b = ((best & 0xffu) * (uint32_t) brightest) / 255u;
+                    result = (r << 16) | (g << 8) | b;
+                }
+            }
+            else if (wavesWhich == 4)
+            {
+                /*
+                    Gradient drift: the painted gradient, scrolling along the keybed.
+
+                    Every other pattern has its palette decided for it - waves is blue,
+                    aurora is green through violet, breathing and ember borrow whatever
+                    is on the keys. This one is the only screensaver that is actually
+                    yours, and it costs almost nothing because the gradient already
+                    knows how to answer "what colour is it here".
+
+                    Sampled as a loop, which gradientAt is not.
+
+                    Wrapping the position means the last stop meets the first, and with
+                    a blue-to-red gradient that is a jump of over two hundred levels
+                    travelling along the keys - the same hard seam that made aurora look
+                    steppy, reintroduced by the back door. Reading the stops cyclically,
+                    so the last interpolates back round to the first, keeps the drift
+                    going one way for ever with nothing to catch the eye.
+
+                    Folding would also remove the seam, but it sends the gradient out
+                    and back so the keyboard shows it reversed half the time. A loop
+                    keeps the direction.
+                */
+                const float travel = (float) note * 0.02f
+                                   + (float) wavePhase * 0.00006f;
+
+                float position = travel - (float) (int) travel;
+
+                if (position < 0.0f)
+                    position += 1.0f;
+
+                const int stops = getGradientCount();
+                const float scaled = position * (float) stops;
+                int lower = (int) scaled;
+
+                if (lower >= stops)
+                    lower = stops - 1;
+
+                const float blend = scaled - (float) lower;
+                const uint32_t from = getGradientStop (lower);
+                const uint32_t to = getGradientStop ((lower + 1) % stops);
+
+                uint32_t out = 0;
+
+                for (int shift = 16; shift >= 0; shift -= 8)
+                {
+                    const float channelA = (float) ((from >> shift) & 0xffu);
+                    const float channelB = (float) ((to >> shift) & 0xffu);
+                    int value = (int) (channelA + (channelB - channelA) * blend + 0.5f);
+
+                    if (value < 0) value = 0;
+                    if (value > 255) value = 255;
+
+                    out |= (uint32_t) value << shift;
+                }
+
+                result = out;
+            }
+            else if (wavesWhich == 5)
+            {
+                /*
+                    Rainfall: keys lighting one at a time and fading, nothing else lit.
+
+                    Stateless on purpose. Each key is given its own interval and its own
+                    starting offset from a hash of its note number, so the drops are
+                    scattered and no two keys fall together for long - without a random
+                    generator to seed, a per-note array to keep, or anything that has to
+                    be reset when the pattern starts. The phase counter the other
+                    patterns already use is the only input.
+
+                    The colour comes from the gradient rather than from the map, so this
+                    works over Blackout, which is where a sparse pattern looks best. A
+                    key always falls in the same colour, taken from its own hash, so the
+                    keyboard keeps a consistent character instead of flickering through
+                    the whole palette.
+                */
+                uint32_t h = (uint32_t) note * 2654435761u;
+                h ^= h >> 15;
+                h *= 2246822519u;
+                h ^= h >> 13;
+
+                const int interval = 1400 + (int) (h % 3600u);
+                const int offset = (int) ((h >> 7) % (uint32_t) interval);
+                const int fall = 520;
+
+                int phase = (wavePhase + offset) % interval;
+
+                if (phase < 0)
+                    phase += interval;
+
+                if (phase >= fall)
+                {
+                    result = 0;
+                }
+                else
+                {
+                    /* Bright at the strike, then a square-law fade, so a drop lands
+                       hard and leaves slowly rather than ramping linearly out. */
+                    int level = 255 - (phase * 255) / fall;
+                    level = (level * level) / 255;
+
+                    const float where = (float) ((h >> 19) % 1000u) / 999.0f;
+                    const uint32_t tint = gradientAt (where);
+
+                    const uint32_t r = (((tint >> 16) & 0xffu) * (uint32_t) level) / 255u;
+                    const uint32_t g = (((tint >> 8) & 0xffu) * (uint32_t) level) / 255u;
+                    const uint32_t b = ((tint & 0xffu) * (uint32_t) level) / 255u;
+
+                    result = (r << 16) | (g << 8) | b;
+                }
+            }
+            else if (wavesWhich == 3)
+            {
+                /*
+                    Ember only.
+
+                    Breathing used to share this branch and no longer does: swelling the
+                    whole map by one amount is what the device's unlit level already
+                    means, so it is sent as a single controller message from
+                    flushGlobals instead of repainting a hundred and twenty-eight notes
+                    every tick. That also leaves a key being played at full brightness,
+                    which the firmware does for free and this path could not.
+
+                    Ember cannot take that route - a per-note phase is a hundred and
+                    twenty-eight different levels, and there is one control. So it stays
+                    here, and it is the expensive one of the two by design.
 
                     A floor under the dim end, because a map that goes fully dark and
                     comes back reads as the plugin dropping out. It never quite leaves.
                 */
-                const int spread = wavesWhich == 3 ? note * 17 : 0;
-                const int phase = ((spread + wavePhase / 26) % 360 + 360) % 360;
+                const int phase = ((note * 17 + wavePhase / 26) % 360 + 360) % 360;
                 const int tri = phase < 180 ? phase : 360 - phase;
 
                 int level = 60 + (tri * 195) / 180;
@@ -1756,6 +2279,21 @@ void LumiLink::compositeColours()
             }
         }
 
+        /*
+            A note the pedal is holding, marked as such.
+
+            It is lit either way - it is sounding, and the keyboard should say so. But
+            whether a finger is on the key is a different fact from whether the note is
+            ringing, and under the pedal those come apart. A tint over the sustained
+            ones and not the pressed ones is the smallest thing that tells them apart,
+            and it goes on last so nothing above overwrites it.
+        */
+        if (sustainOn && sustainMask[note >> 6] != 0
+             && ((sustainMask[note >> 6] >> (note & 63)) & 1ull) != 0ull)
+        {
+            result = mixColour (result, sustainTint, 150);
+        }
+
         desiredColour[note].store (result, std::memory_order_relaxed);
     }
 }
@@ -1764,6 +2302,14 @@ void LumiLink::publishLitBits (uint64_t low, uint64_t high)
 {
     litBits[0].store (low, std::memory_order_release);
     litBits[1].store (high, std::memory_order_release);
+}
+
+/* Which of the lit notes are lit because of the pedal rather than a finger. Published
+   from the audio thread with the lit bits, since that is where both are known. */
+void LumiLink::publishSustainBits (uint64_t low, uint64_t high)
+{
+    sustainBits[0].store (low, std::memory_order_release);
+    sustainBits[1].store (high, std::memory_order_release);
 }
 
 void LumiLink::setExternalLit (int note, bool isLit)
@@ -2825,7 +3371,35 @@ void LumiLink::sendKeyNote (uint8_t note, bool isOn)
 void LumiLink::flushGlobals()
 {
     const int wantBrightness = brightness.load (std::memory_order_relaxed);
-    const int wantUnlit = unlitLevel.load (std::memory_order_relaxed);
+    int wantUnlit = unlitLevel.load (std::memory_order_relaxed);
+
+    /*
+        Breathing is one controller message, not a hundred and twenty-eight notes.
+
+        The firmware already computes alpha as level * globalBrightness / 255, where
+        level is the unlit level for a resting key and 255 for one being played. That is
+        exactly what breathing wants: swell the painted map and leave a key under a
+        finger at full. Driving it from here costs one CC per tick instead of repainting
+        every note, and it is the whole reason the device has that control.
+
+        Only breathing. Ember is the same swell with a per-note phase offset, and a
+        single global level cannot express a hundred and twenty-eight different phases -
+        it stays in the per-note path, as do waves and aurora, which are colour fields
+        rather than brightness.
+
+        The stored level is not touched, so the slider does not move and nothing reaches
+        the host's automation. When the screensaver stops, wantUnlit goes back to what
+        the user set and the next flush sends it.
+    */
+    const int breath = breathLevel();
+
+    if (breath < 255)
+    {
+        wantUnlit = wantUnlit * breath / 255;
+
+        if (wantUnlit < 1)
+            wantUnlit = 1;
+    }
 
     if (wantBrightness != sentBrightness)
     {
@@ -3094,10 +3668,24 @@ void LumiLink::flushColours()
         that note holding its old colour while its neighbours change, which reads as
         colours landing on the wrong keys. Smoothness is not worth that.
     */
-    /* The waves count as animation: they change every frame and the send budget has to
-       allow for them or they crawl. */
+    /*
+        What counts as animation, which is a question about cost rather than movement.
+
+        Waves, aurora and ember repaint every note every tick and need the send budget
+        raised or they crawl. Breathing does not: it is one controller message that the
+        firmware applies to the whole keyboard, so it moves without sending a single
+        note and asking for a bigger note allowance on its behalf would only take
+        bandwidth from whatever else is running.
+    */
+    const int idleMode = wavesMode.load (std::memory_order_relaxed);
+
+    /* Breathing sends no notes at all - it is one controller message - and rainfall
+       lights a handful of keys rather than repainting the keybed. Neither should take
+       the note allowance a full-field pattern needs. */
+    const bool breathingOnly = wavesRunning() && (idleMode == 2 || idleMode == 5);
+
     const bool animating = activeRipples > 0 || activeGlow > 0 || pulseLevel > 0
-                        || wavesRunning();
+                        || (wavesRunning() && ! breathingOnly);
     /*
         How many notes go out this tick.
 
@@ -3316,10 +3904,69 @@ void setNoteRef (LumiPaint *self, int note, int delta)
         self->litBits[word] &= ~mask;
 }
 
+/*
+    Note off, with the pedal taken into account.
+
+    The release is deferred, not suppressed. Suppressing it would lose the count: a note
+    struck twice while the pedal is down is held twice, and letting go of both while
+    sustaining has to leave it lit until the pedal rises, then put it out once. So each
+    pending release is counted and applied in full when the pedal comes up.
+
+    Everything downstream stays as it was. The note is still lit, so afterglow, ripples
+    and the chord halo behave exactly as they do for a finger on the key - which is the
+    point: the keyboard should show what is sounding, and under the pedal that is not
+    the same as what is being pressed.
+*/
+void releaseNote (LumiPaint *self, int note)
+{
+    if (note < 0 || note > 127)
+        return;
+
+    if (self->sustainDown && self->refCount[note] > 0)
+    {
+        ++self->pendingRelease[note];
+        return;
+    }
+
+    setNoteRef (self, note, -1);
+}
+
+/*
+    CC 64, in the half the MIDI spec actually settles: 64 and above is down.
+
+    On the way up every note the pedal was holding is released at once, which is what
+    makes a pedal lift visible - the whole sustained chord goes out together and the
+    afterglow trails from all of it, rather than notes dropping away one at a time as
+    fingers happened to leave them.
+*/
+void setSustain (LumiPaint *self, bool down)
+{
+    if (down == self->sustainDown)
+        return;
+
+    self->sustainDown = down;
+    self->link.setSustain (down);
+
+    if (down)
+        return;
+
+    for (int note = 0; note < 128; ++note)
+    {
+        while (self->pendingRelease[note] > 0)
+        {
+            --self->pendingRelease[note];
+            setNoteRef (self, note, -1);
+        }
+    }
+}
+
 void clearAllNotes (LumiPaint *self)
 {
     for (int i = 0; i < 128; ++i)
+    {
         self->refCount[i] = 0;
+        self->pendingRelease[i] = 0;
+    }
 
     self->litBits[0] = 0;
     self->litBits[1] = 0;
@@ -3402,7 +4049,7 @@ void handleEvent (LumiPaint *self, const clap_event_header_t *header)
         }
         else
         {
-            setNoteRef (self, ev->key, -1);
+            releaseNote (self, ev->key);
             self->link.noteOnChannel (ev->channel < 0 ? 0 : ev->channel, ev->key, false);
         }
     }
@@ -3428,7 +4075,7 @@ void handleEvent (LumiPaint *self, const clap_event_header_t *header)
         }
         else if (status == 0x80 || (status == 0x90 && ev->data[2] == 0))
         {
-            setNoteRef (self, ev->data[1], -1);
+            releaseNote (self, ev->data[1]);
             self->link.noteOnChannel (ev->data[0] & 0x0f, ev->data[1], false);
         }
         else if (status == 0xe0)
@@ -3436,6 +4083,8 @@ void handleEvent (LumiPaint *self, const clap_event_header_t *header)
             self->link.bendOnChannel (ev->data[0] & 0x0f,
                                       ((int) ev->data[2] << 7) | (int) ev->data[1]);
         }
+        else if (status == 0xb0 && ev->data[1] == 64)
+            setSustain (self, ev->data[2] >= 64);
         else if (status == 0xb0 && ev->data[1] == 123)
             clearAllNotes (self);
         else if (status == 0xb0 && ev->data[1] == self->link.getSplashCC())
@@ -3687,6 +4336,17 @@ clap_process_status pluginProcess (const clap_plugin_t *plugin, const clap_proce
 
         if (deviceOctave != kConfigUnknown && (int) self->octave != deviceOctave)
             pushGuiParam (self, kParamOctave, (double) deviceOctave, true, true);
+    }
+
+    {
+        uint64_t sustained[2] = { 0, 0 };
+
+        if (self->sustainDown)
+            for (int note = 0; note < 128; ++note)
+                if (self->pendingRelease[note] > 0)
+                    sustained[note >> 6] |= 1ull << (note & 63);
+
+        self->link.publishSustainBits (sustained[0], sustained[1]);
     }
 
     self->link.publishLitBits (self->litBits[0], self->litBits[1]);
@@ -4038,7 +4698,7 @@ bool stateSave (const clap_plugin_t *plugin, const clap_ostream_t *stream)
     if (stream->write (stream, &span, sizeof (span)) != (int64_t) sizeof (span))
         return false;
 
-    const uint32_t gradients[38] = { self->link.getPressureGradColour(),
+    const uint32_t gradients[47] = { self->link.getPressureGradColour(),
                                     self->link.getBendGradColour(),
                                     (uint32_t) self->link.getBendFullScale(),
                                     (uint32_t) ((self->link.getEnablePitchBend() ? 1 : 0)
@@ -4094,9 +4754,18 @@ bool stateSave (const clap_plugin_t *plugin, const clap_ostream_t *stream)
                                     (uint32_t) (self->link.getBendPathEnabled() ? 1 : 0),
                                     self->link.getBendPathColour(),
                                     (uint32_t) self->link.getRippleSource(),
-                                    (uint32_t) (((self->link.getWavesMode() & 3) << 11)
+                                    (uint32_t) (((self->link.getWavesMode() & 7) << 11)
                                                 + (self->link.getWavesEnabled() ? 0x400 : 0)
-                                                + (self->link.getWavesDelay() & 0x3ff)) };
+                                                + (self->link.getWavesDelay() & 0x3ff)),
+
+                                    /* The paint gradient: how many stops are in use,
+                                       then all eight regardless, so the array length
+                                       never depends on the count. */
+                                    (uint32_t) self->link.getGradientCount(),
+                                    self->link.getGradientStop (0), self->link.getGradientStop (1),
+                                    self->link.getGradientStop (2), self->link.getGradientStop (3),
+                                    self->link.getGradientStop (4), self->link.getGradientStop (5),
+                                    self->link.getGradientStop (6), self->link.getGradientStop (7) };
 
     if (stream->write (stream, gradients, sizeof (gradients)) != (int64_t) sizeof (gradients))
         return false;
@@ -4210,14 +4879,29 @@ bool stateLoad (const clap_plugin_t *plugin, const clap_istream_t *stream)
     }
     else if (header[1] >= 25)
     {
-        uint32_t extras[38] = { 0xffffff, 0x00c4ff, 2, 3, 0x00ffd6, 4, 2, 0xff7a1f, 1, 6, 3,
+        uint32_t extras[47] = { 0xffffff, 0x00c4ff, 2, 3, 0x00ffd6, 4, 2, 0xff7a1f, 1, 6, 3,
                                 0xffd000, 8, 0x4060ff, 0, 0x30406a, 0,
                                 170, 0xab5,
                                 0xff3b30, 0x8a6a2a, 0xffd60a, 0x2a6a5a,
                                 0x30d158, 0x3a4a8a, 0x9c6aff, 0x141414,
                                 150, 0x2ea85e, 0xd02030, 0, 60, 0x9c6aff, 0, 0, 0x00c4ff, 0, 60 };
 
-        if (stream->read (stream, extras, sizeof (extras)) != (int64_t) sizeof (extras))
+        /*
+            Read what this state actually contains, not what the current build writes.
+
+            Versions 25 and 26 wrote thirty-eight words here; 27 added nine more for the
+            paint gradient. Reading the newer length from an older state succeeds - the
+            stream has more bytes after this block - and silently swallows the first
+            thirty-six bytes of the port name that follows, so every read after it is
+            misaligned and the port length comes out of the middle of a colour. A
+            project saved by an earlier build would fail to restore, which in a host
+            that treats a failed state load as a failed plugin is indistinguishable
+            from a crash.
+        */
+        const size_t words = header[1] >= 27 ? 47u : 38u;
+        const size_t bytes = words * sizeof (uint32_t);
+
+        if (stream->read (stream, extras, bytes) != (int64_t) bytes)
             return false;
 
         self->link.setPressureGradColour (extras[0]);
@@ -4270,7 +4954,18 @@ bool stateLoad (const clap_plugin_t *plugin, const clap_istream_t *stream)
             self->link.setRippleSource ((int) extras[36]);
             self->link.setWavesEnabled ((extras[37] & 0x400u) != 0u);
             self->link.setWavesDelay ((int) (extras[37] & 0x3ffu));
-            self->link.setWavesMode ((int) ((extras[37] >> 11) & 3u));
+            /* Three bits, not two. Six patterns no longer fit in two, and widening it is
+               safe without a version bump: states written when there were four put zero
+               in the third bit, so they read back the same value either way. */
+            self->link.setWavesMode ((int) ((extras[37] >> 11) & 7u));
+        }
+
+        if (header[1] >= 27)
+        {
+            self->link.setGradientCount ((int) extras[38]);
+
+            for (int i = 0; i < kGradientStops; ++i)
+                self->link.setGradientStop (i, extras[39 + i]);
         }
     }
 

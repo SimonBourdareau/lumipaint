@@ -18,8 +18,15 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
+#include <string>
 
 namespace lumipaint {
+
+/* Room for a whole look: 128 note lines plus the effect colours and settings. A map
+   that does not fit is refused rather than truncated - half a look pasted silently
+   would be worse than a message. */
+const int kClipBytes = 8192;
 
 /*
     Which instance owns the keyboard.
@@ -88,6 +95,18 @@ public:
         Stale entries are self-correcting: the background sweep rewalks the table every
         couple of seconds regardless.
     */
+    /*
+        Copy and paste between instances, carrying the same text a .lumimap holds.
+
+        Shared memory rather than the system clipboard: this is only ever read by
+        another LumiPaint, the format is ours, and putting several kilobytes of plugin
+        state on the user's clipboard would be rude.
+    */
+    bool writeClipboard (const std::string &text);
+    bool readClipboard (std::string &text) const;
+    uint32_t clipboardSeq() const;
+
+
     void publishColour (int note, uint32_t rgb);
     bool adoptDeviceState (uint32_t *dest) const;
     void forgetDeviceState();

@@ -175,6 +175,7 @@ void pumpInput (ImGuiHostWindow *c)
         io.AddKeyEvent (ImGuiMod_Shift, (mask & ShiftMask) != 0);
         io.AddKeyEvent (ImGuiMod_Ctrl, (mask & ControlMask) != 0);
         io.AddKeyEvent (ImGuiMod_Alt, (mask & Mod1Mask) != 0);
+        io.AddKeyEvent (ImGuiMod_Super, (mask & Mod4Mask) != 0);
     }
 
     XEvent event;

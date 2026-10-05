@@ -28,7 +28,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Install LumiPaint</string>
 <key>CFBundleExecutable</key><string>Install LumiPaint</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0.1</string>
+<key>CFBundleShortVersionString</key><string>1.0.2</string>
 <key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>NSHighResolutionCapable</key><true/>

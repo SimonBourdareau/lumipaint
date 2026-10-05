@@ -142,9 +142,20 @@ const uint32_t kStateMagic   = 0x4c554d31;
     itself. The descriptor said 0.1.0 while the first release was tagged v1.0.0, which is
     exactly the kind of small lie that wastes someone's afternoon.
 */
-const char * const kPluginVersion = "1.0.1";
+const char * const kPluginVersion = "1.0.2";
 
-const uint32_t kStateVersion = 26;
+/*
+    A paint gradient, as a handful of colour stops.
+
+    Eight is enough for anything anyone will build by hand and keeps the whole thing in
+    the state block without a length prefix. Stops are evenly spaced across whatever
+    range they are applied to rather than carrying positions of their own: a position
+    per stop is the next thing to add if it is ever wanted, and nothing here would have
+    to change to allow it.
+*/
+const int kGradientStops = 8;
+
+const uint32_t kStateVersion = 27;
 
 enum ParamId
 {
@@ -319,7 +330,18 @@ public:
         kRippleWheel,
         kRippleFifths,
         kRippleDegree,
-        kRippleMap
+        kRippleMap,
+
+        /*
+            The paint gradient, positioned by the note that threw the wave.
+
+            The other sources all read something the keyboard is already showing, so in
+            Blackout there is nothing to read and in Wheel or Fifths the wave is the
+            same colour as the key it came from, which makes it hard to see. This one
+            owes the map nothing: low notes throw waves from one end of the gradient and
+            high notes from the other, whatever the keys underneath are doing.
+        */
+        kRippleGradient
     };
 
     void setRippleSource (int source);
@@ -337,6 +359,30 @@ public:
     int getSplashSpeed() const;
     void setSplashTrail (int keys);
     int getSplashTrail() const;
+    /* The middle of the instrument, which is where a splash starts. Public so the
+       editor can show it rather than guess. */
+    int splashOrigin() const;
+
+    /* 60..255 while breathing runs, 255 otherwise. The unlit CC and the editor's
+       preview both scale by it, so they cannot disagree. */
+    int breathLevel() const;
+
+    /*
+        Whether the pedal is down, and in what colour to say so.
+
+        A sustained note is lit like a held one, because it is sounding - but a player
+        wants to know which of the two it is, so the sustain tint is blended over notes
+        the pedal is holding and not over notes under a finger. Off by default: the
+        pedal changing the picture is a surprise unless it was asked for.
+    */
+    void publishSustainBits (uint64_t low, uint64_t high);
+    void setSustain (bool down);
+    bool getSustainDown() const;
+    void setSustainEnabled (bool on);
+    bool getSustainEnabled() const;
+    void setSustainColour (uint32_t rgb);
+    uint32_t getSustainColour() const;
+
     void setAfterglowEnabled (bool on);
     bool getAfterglowEnabled() const;
     void setAfterglowColour (uint32_t rgb);
@@ -429,6 +475,29 @@ public:
     */
     void setWavesMode (int mode);
     int getWavesMode() const;
+
+    /*
+        The paint gradient: the colours, how many of them are in use, and nothing else.
+
+        It lives here rather than in the editor because it travels - saved with the
+        instance, written into a map, and carried by a copy between tracks. A gradient
+        someone spent a minute building should not evaporate when the editor closes.
+    */
+    void setGradientStop (int index, uint32_t rgb);
+    uint32_t getGradientStop (int index) const;
+    void setGradientCount (int count);
+    int getGradientCount() const;
+
+    /* The colour at 0..1 along the gradient, interpolated between the stops either
+       side. Public because painting a range and drawing the strip in the editor are
+       the same question asked twice. */
+    uint32_t gradientAt (float position) const;
+
+    /* The settings clipboard lives in the shared block the claim already owns, so it
+       reaches every instance on the machine. Forwarded rather than exposing the claim,
+       which has no other business being reachable from the editor. */
+    bool writeClipboard (const std::string &text);
+    bool readClipboard (std::string &text) const;
     bool wavesRunning() const;
 
     /*
@@ -623,8 +692,16 @@ private:
     std::atomic<int> wavesEnabled;
     std::atomic<int> wavesDelay;
 
-    /* Which idle pattern runs: 0 waves, 1 aurora, 2 breathing, 3 ember. */
+    /* Which idle pattern runs: 0 waves, 1 aurora, 2 breathing, 3 ember,
+       4 gradient drift, 5 rainfall. */
     std::atomic<int> wavesMode;
+
+    std::atomic<int> sustainHeld;
+    std::atomic<int> sustainEnabled;
+    std::atomic<uint32_t> sustainColour;
+
+    std::atomic<uint32_t> gradientStops[kGradientStops];
+    std::atomic<int> gradientCount;
     std::atomic<int> idleMs;
     int wavePhase;
 
@@ -655,6 +732,7 @@ private:
     int splashCooldown;
     std::atomic<uint64_t> litBits[2];
     std::atomic<uint64_t> externalLitBits[2];
+    std::atomic<uint64_t> sustainBits[2];
     std::atomic<int> brightness;
     std::atomic<int> unlitLevel;
     std::atomic<int> displayOffset;
@@ -768,6 +846,16 @@ struct LumiPaint
     LumiLink link;
 
     int refCount[128];
+
+    /*
+        The pedal, and what it is holding.
+
+        A release that arrives while the pedal is down is counted here rather than
+        acted on, so a note struck twice and released twice still goes out exactly once
+        when the pedal rises.
+    */
+    bool sustainDown = false;
+    int pendingRelease[128] = { 0 };
     uint64_t litBits[2];
     double brightness;
     double unlitLevel;

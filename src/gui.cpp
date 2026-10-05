@@ -222,6 +222,19 @@ public:
 
         drawStatusBar();
         ImGui::Separator();
+        /*
+            Select-all, before anything draws.
+
+            Cmd-A on macOS and Ctrl-A elsewhere, through the same modifier the keyboard
+            click uses. The repeat flag is off so holding the chord down does not fire
+            every frame - harmless here, since selecting everything twice is selecting
+            everything, but it would spin the undo stack the moment this grows to cover
+            anything destructive.
+        */
+        if (multiSelectDown() && ImGui::IsKeyPressed (ImGuiKey_A, false))
+            for (int n = 0; n < 128; ++n)
+                selected[n] = true;
+
         drawKeyboard();
         ImGui::Separator();
 
@@ -267,6 +280,10 @@ public:
 
         beginSection ("Colour", IM_COL32 (34, 30, 44, 255));
         drawPaintControls();
+        endSection();
+
+        beginSection ("Gradient", IM_COL32 (36, 30, 26, 255));
+        drawGradientControls();
         endSection();
 
         beginSection ("Modes", IM_COL32 (28, 36, 30, 255));
@@ -319,6 +336,88 @@ public:
     }
 
 private:
+    /*
+        Undo, over the painted colours.
+
+        Every destructive thing in this editor replaces some or all of the 128 colours:
+        the generators, the gradient, apply-to-selection, importing a captured keybed,
+        loading a map. None of them could be taken back, so one misplaced click on a map
+        built by hand was the end of it.
+
+        What is kept is the colour table and nothing else. Effect settings and levels are
+        left out deliberately - they are one control each and trivially reset by hand,
+        while a colour table is a hundred and twenty-eight decisions. Mixing the two
+        would mean an undo that moved sliders the user never touched.
+
+        Thirty steps, oldest dropped. Fixed-size entries, so the whole history is under
+        sixteen kilobytes and there is nothing to tune.
+    */
+    struct ColourSnapshot
+    {
+        uint32_t note[128];
+    };
+
+    static const int kUndoDepth = 30;
+
+    std::vector<ColourSnapshot> undoStack;
+    std::vector<ColourSnapshot> redoStack;
+
+    ColourSnapshot currentColours() const
+    {
+        ColourSnapshot shot;
+
+        for (int n = 0; n < 128; ++n)
+            shot.note[n] = owner->link.getColour (n);
+
+        return shot;
+    }
+
+    void restoreColours (const ColourSnapshot &shot)
+    {
+        for (int n = 0; n < 128; ++n)
+            owner->link.setColour (n, shot.note[n]);
+
+        markDirty();
+    }
+
+    /*
+        Called before an edit, never after.
+
+        A redo stack only means anything until the next edit: having gone back three
+        steps and then painted something new, the branch that was ahead is unreachable
+        and keeping it would let the redo arrow walk into a history that no longer
+        happened.
+    */
+    void pushUndo()
+    {
+        undoStack.push_back (currentColours());
+
+        if ((int) undoStack.size() > kUndoDepth)
+            undoStack.erase (undoStack.begin());
+
+        redoStack.clear();
+    }
+
+    void undo()
+    {
+        if (undoStack.empty())
+            return;
+
+        redoStack.push_back (currentColours());
+        restoreColours (undoStack.back());
+        undoStack.pop_back();
+    }
+
+    void redo()
+    {
+        if (redoStack.empty())
+            return;
+
+        undoStack.push_back (currentColours());
+        restoreColours (redoStack.back());
+        redoStack.pop_back();
+    }
+
     void drawStatusBar()
     {
         drawPortSelector();
@@ -341,6 +440,34 @@ private:
                 lowNote = 115;
             }
         }
+
+        /*
+            Pushed to the right edge rather than placed after the range control, so the
+            arrows stay in the corner whatever the window is doing. Measured from the
+            window width so they do not drift when the editor is resized.
+        */
+        const float arrow = 30.0f;
+        ImGui::SameLine (ImGui::GetWindowWidth() - (arrow * 2.0f + 28.0f));
+
+        ImGui::BeginDisabled (undoStack.empty());
+
+        if (ImGui::Button ("<##undo", ImVec2 (arrow, 0.0f)))
+            undo();
+
+        if (! undoStack.empty() && ImGui::IsItemHovered())
+            ImGui::SetTooltip ("Undo colours (%d)", (int) undoStack.size());
+
+        ImGui::EndDisabled();
+        ImGui::SameLine (0.0f, 4.0f);
+        ImGui::BeginDisabled (redoStack.empty());
+
+        if (ImGui::Button (">##redo", ImVec2 (arrow, 0.0f)))
+            redo();
+
+        if (! redoStack.empty() && ImGui::IsItemHovered())
+            ImGui::SetTooltip ("Redo colours (%d)", (int) redoStack.size());
+
+        ImGui::EndDisabled();
     }
 
     /*
@@ -405,7 +532,8 @@ private:
     /* The horizontal lockup, for the empty space under the last column. */
     void drawWordmark()
     {
-        ImGui::Spacing();
+        /* One blank line, not two. The version line underneath was landing a few
+           pixels past the bottom of the window, which is a silly thing to lose it to. */
         ImGui::Spacing();
         drawLogo (30.0f);
 
@@ -644,13 +772,34 @@ private:
         if (hitNote >= 0 && ImGui::IsItemClicked (ImGuiMouseButton_Left))
             applyClick (hitNote);
 
+        /*
+            One snapshot per stroke, taken on the press rather than per key.
+
+            A drag across two octaves is one thing the user did; undoing it a key at a
+            time would need forty presses of the arrow to get back. IsItemClicked fires
+            once at the start of the drag, IsItemActive stays true for the rest of it.
+        */
+        if (hitNote >= 0 && ImGui::GetIO().KeyAlt
+             && ImGui::IsItemClicked (ImGuiMouseButton_Left))
+            pushUndo();
+
         if (hitNote >= 0 && ImGui::IsItemActive() && ImGui::GetIO().KeyAlt)
             paintNote (hitNote);
 
         ImGui::EndChild();
 
+        /*
+            The legend goes on the keyboard's tooltip, not in a panel.
+
+            It is the one place a person is already looking when they want to know what
+            a click will do, it costs no height in a column that had none to spare, and
+            it cannot drift out of sync with the keys it describes.
+        */
         if (hitNote >= 0)
-            ImGui::SetTooltip ("%s%d", kNoteNames[pitchClassOf (hitNote)], octaveOf (hitNote));
+            ImGui::SetTooltip ("%s%d\nclick selects  ·  shift extends  ·  %s-click adds"
+                               "\nalt-drag paints with the picker colour",
+                               kNoteNames[pitchClassOf (hitNote)], octaveOf (hitNote),
+                               multiSelectName());
     }
 
     void drawKey (ImDrawList *draw, int note, float x, float y, float width, float height, bool isHovered)
@@ -743,6 +892,27 @@ private:
         return -1;
     }
 
+    /*
+        The "add to selection" modifier, which is not the same key everywhere.
+
+        Command on macOS, Control on Windows and Linux. ImGui sets ConfigMacOSXBehaviors
+        from the Cocoa backend, so this asks the backend what platform it is on rather
+        than compiling the answer in - which also means a Mac user gets Cmd-click even
+        in a build that was not made on a Mac.
+    */
+    /* What to call it on screen. Saying Ctrl to a Mac user is the kind of small wrong
+       detail that makes a panel feel like it was written for somewhere else. */
+    static const char *multiSelectName()
+    {
+        return ImGui::GetIO().ConfigMacOSXBehaviors ? "Cmd" : "Ctrl";
+    }
+
+    static bool multiSelectDown()
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        return io.ConfigMacOSXBehaviors ? io.KeySuper : io.KeyCtrl;
+    }
+
     void applyClick (int note)
     {
         const ImGuiIO &io = ImGui::GetIO();
@@ -755,8 +925,10 @@ private:
             for (int n = from; n <= to; ++n)
                 selected[n] = true;
         }
-        else if (io.KeyCtrl)
+        else if (multiSelectDown())
         {
+            /* Toggle, so a second click takes a key back out again - which is what
+               makes building a scattered selection by hand survive a misclick. */
             selected[note] = ! selected[note];
             anchorNote = note;
         }
@@ -785,6 +957,9 @@ private:
     {
         const uint32_t rgb = currentPickerRgb();
 
+        /* One snapshot per stroke, not per key: a drag across two octaves is one thing
+           the user did, and undoing it a key at a time would be useless. The caller
+           pushes on mouse-down and this runs for every key the drag touches. */
         if (paintScope == 1)
         {
             const int pc = pitchClassOf (note);
@@ -851,6 +1026,8 @@ private:
         if (total == 0)
             return;
 
+        pushUndo();
+
         for (int n = 0; n < 128; ++n)
         {
             selected[n] = pressed[n];
@@ -860,6 +1037,191 @@ private:
         }
 
         markDirty();
+    }
+
+    /*
+        Paint the gradient across whatever is selected.
+
+        Spread by position in the selection rather than by note number, so a selection
+        with gaps still runs the whole gradient end to end - select every C and you get
+        one stop per octave, not a gradient squeezed into the span and sampled at
+        twelve-note intervals.
+    */
+    void applyGradientToSelection()
+    {
+        int notes[128];
+        int total = 0;
+
+        for (int n = 0; n < 128; ++n)
+            if (selected[n])
+                notes[total++] = n;
+
+        if (total == 0)
+            return;
+
+        pushUndo();
+
+        for (int i = 0; i < total; ++i)
+        {
+            const float position = total > 1 ? (float) i / (float) (total - 1) : 0.0f;
+            owner->link.setColour (notes[i], owner->link.gradientAt (position));
+        }
+
+        markDirty();
+    }
+
+    void drawGradientStrip()
+    {
+        ImDrawList *draw = ImGui::GetWindowDrawList();
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const float width = 300.0f;
+        const float height = 14.0f;
+
+        /* Drawn a column at a time through the same function that paints the keys, so
+           what is on screen cannot disagree with what the button would produce. */
+        for (int x = 0; x < (int) width; ++x)
+        {
+            const uint32_t rgb = owner->link.gradientAt ((float) x / (width - 1.0f));
+            const ImU32 col = IM_COL32 ((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 255);
+            draw->AddRectFilled (ImVec2 (origin.x + (float) x, origin.y),
+                                 ImVec2 (origin.x + (float) x + 1.0f, origin.y + height), col);
+        }
+
+        draw->AddRect (origin, ImVec2 (origin.x + width, origin.y + height),
+                       IM_COL32 (90, 90, 100, 255));
+        ImGui::Dummy (ImVec2 (width, height));
+    }
+
+    void drawGradientControls()
+    {
+        int count = owner->link.getGradientCount();
+        drawGradientStrip();
+
+        for (int i = 0; i < count; ++i)
+        {
+            uint32_t rgb = owner->link.getGradientStop (i);
+            float col[3] = { (float) ((rgb >> 16) & 0xff) / 255.0f,
+                             (float) ((rgb >> 8) & 0xff) / 255.0f,
+                             (float) (rgb & 0xff) / 255.0f };
+
+            char label[24];
+            std::snprintf (label, sizeof (label), "##stop%d", i);
+
+            if (i > 0)
+                ImGui::SameLine();
+
+            if (ImGui::ColorEdit3 (label, col, ImGuiColorEditFlags_NoInputs
+                                             | ImGuiColorEditFlags_NoLabel))
+            {
+                owner->link.setGradientStop (i, ((uint32_t) (col[0] * 255.0f + 0.5f) << 16)
+                                              | ((uint32_t) (col[1] * 255.0f + 0.5f) << 8)
+                                              |  (uint32_t) (col[2] * 255.0f + 0.5f));
+                markDirty();
+            }
+        }
+
+        /* Beside the swatches, in the gap their row already leaves, so saying where the
+           colours land costs the section nothing. Painting needs a selection and the
+           button alone does not say so. */
+        ImGui::SameLine (0.0f, 14.0f);
+        ImGui::TextDisabled ("paints the selected keys");
+
+        /* Stops, Reverse and the paint button share one row with the swatches above
+           them: three rows became one, which is the whole section's height problem. */
+        ImGui::SetNextItemWidth (86.0f);
+
+        if (ImGui::SliderInt ("##stops", &count, 2, kGradientStops, "%d stops"))
+        {
+            owner->link.setGradientCount (count);
+            markDirty();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button ("Reverse", ImVec2 (74.0f, 0.0f)))
+        {
+            const int n = owner->link.getGradientCount();
+
+            for (int i = 0; i < n / 2; ++i)
+            {
+                const uint32_t a = owner->link.getGradientStop (i);
+                owner->link.setGradientStop (i, owner->link.getGradientStop (n - 1 - i));
+                owner->link.setGradientStop (n - 1 - i, a);
+            }
+
+            markDirty();
+        }
+
+        int picked = 0;
+
+        for (int n = 0; n < 128; ++n)
+            if (selected[n])
+                ++picked;
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled (picked == 0);
+
+        char apply[48];
+        std::snprintf (apply, sizeof (apply), "Paint %d", picked);
+
+        if (ImGui::Button (apply, ImVec2 (116.0f, 0.0f)))
+            applyGradientToSelection();
+
+        ImGui::EndDisabled();
+    }
+
+    /*
+        Copy and paste between instances, through the shared block rather than a file.
+
+        The payload is exactly what a .lumimap holds, so there is one format and one
+        parser; a setting that saves is a setting that copies, with nothing to keep in
+        step. Paste is disabled until something has been copied, so the button is never
+        a guess.
+    */
+    void drawClipboardControls (const ImVec2 &size)
+    {
+        if (ImGui::Button ("Copy", size))
+        {
+            const std::string text = PresetIO::toText (owner->link, owner->brightness,
+                                                       owner->unlitLevel);
+            presetMessage = owner->link.writeClipboard (text) ? "copied"
+                                                               : "too large to copy";
+        }
+
+        ImGui::SameLine();
+
+        std::string pending;
+        const bool have = owner->link.readClipboard (pending);
+
+        ImGui::BeginDisabled (! have);
+
+        if (ImGui::Button ("Paste", size))
+        {
+            double b = owner->brightness;
+            double u = owner->unlitLevel;
+
+            pushUndo();
+
+            if (PresetIO::fromText (pending, owner->link, b, u))
+            {
+                /* The same two levels the host has to be told about on a map load, by
+                   the same route. A paste that changed brightness without telling the
+                   host would leave the parameter and the device disagreeing until
+                   something else nudged it. */
+                pushGuiParam (owner, kParamBrightness, b, true, false);
+                pushGuiParam (owner, kParamBrightness, b, false, true);
+                pushGuiParam (owner, kParamUnlitLevel, u, true, false);
+                pushGuiParam (owner, kParamUnlitLevel, u, false, true);
+                presetMessage = "pasted";
+                markDirty();
+            }
+            else
+            {
+                presetMessage = PresetIO::lastError();
+            }
+        }
+
+        ImGui::EndDisabled();
     }
 
     uint32_t currentPickerRgb() const
@@ -883,23 +1245,34 @@ private:
         ImGui::Text ("%d of 128 selected", countSelected());
         ImGui::SetNextItemWidth (120.0f);
         ImGui::Combo ("##scope", &paintScope, "Single note\0All octaves\0");
-        ImGui::TextDisabled ("alt-drag paints");
-        ImGui::EndGroup();
+        /* One line, not two: the group beside the picker has width to spare and the
+           column below it does not have the height. */
+        ImGui::TextDisabled ("alt-drag paints  ·  %s adds", multiSelectName());
 
-        ImGui::SetNextItemWidth (90.0f);
+        /*
+            The note field sits beside the picker rather than under it.
+
+            The picker is 150 tall and the column beside it held four short controls, so
+            there was dead space on the right and the whole left column ran off the
+            bottom of the window. Nothing here is smaller than it was - it is in the gap
+            that was already there.
+        */
+        ImGui::SetNextItemWidth (60.0f);
 
         if (ImGui::DragInt ("##note", &anchorNote, 0.25f, 0, 127, "%d"))
             selectSingle (anchorNote);
 
         ImGui::SameLine();
         ImGui::Text ("%s%d", kNoteNames[pitchClassOf (anchorNote)], octaveOf (anchorNote));
-        ImGui::SameLine();
 
-        if (ImGui::Button ("Set this note", ImVec2 (120.0f, 0.0f)))
+        if (ImGui::Button ("Set this note", ImVec2 (150.0f, 0.0f)))
         {
+            pushUndo();
             owner->link.setColour (anchorNote, currentPickerRgb());
             markDirty();
         }
+
+        ImGui::EndGroup();
 
         {
             const int pressed = countPressed();
@@ -926,22 +1299,39 @@ private:
             }
         }
 
-        if (ImGui::Button ("Apply to selection", ImVec2 (150.0f, 0.0f)))
+        /* Three to a row rather than two. The column is wide enough for it and the
+           labels still fit; six rows of buttons become four, which is most of what the
+           left column needed to stop running off the bottom. */
+        const ImVec2 wide (116.0f, 0.0f);
+
+        if (ImGui::Button ("Apply to sel.", wide))
             applyToSelection (currentPickerRgb());
 
         ImGui::SameLine();
 
-        if (ImGui::Button ("Pick from selection", ImVec2 (150.0f, 0.0f)))
+        if (ImGui::Button ("Pick from sel.", wide))
             pickFromSelection();
-
-        if (ImGui::Button ("Fill unselected", ImVec2 (150.0f, 0.0f)))
-            applyToUnselected (currentPickerRgb());
 
         ImGui::SameLine();
 
-        if (ImGui::Button ("Invert selection", ImVec2 (150.0f, 0.0f)))
+        if (ImGui::Button ("Fill unsel.", wide))
+            applyToUnselected (currentPickerRgb());
+
+        if (ImGui::Button ("Invert sel.", wide))
             for (int n = 0; n < 128; ++n)
                 selected[n] = ! selected[n];
+
+        ImGui::SameLine();
+
+        if (ImGui::Button ("Select all", wide))
+            for (int n = 0; n < 128; ++n)
+                selected[n] = true;
+
+        ImGui::SameLine();
+
+        if (ImGui::Button ("Select none", wide))
+            for (int n = 0; n < 128; ++n)
+                selected[n] = false;
 
         /*
             Maps as files, saved wherever you like.
@@ -952,49 +1342,61 @@ private:
             editor up. The button records what was asked for and the frame finishes
             first.
         */
-        if (ImGui::Button ("Save map...", ImVec2 (150.0f, 0.0f)))
+        const ImVec2 narrow (84.0f, 0.0f);
+
+        if (ImGui::Button ("Save...", narrow))
             pendingDialog = 1;
 
         ImGui::SameLine();
 
-        if (ImGui::Button ("Load map...", ImVec2 (150.0f, 0.0f)))
+        if (ImGui::Button ("Load...", narrow))
             pendingDialog = 2;
+
+        ImGui::SameLine();
+        drawClipboardControls (narrow);
 
         if (! presetMessage.empty())
             ImGui::TextDisabled ("%s", presetMessage.c_str());
 
-        if (ImGui::Button ("Select all", ImVec2 (150.0f, 0.0f)))
-            for (int n = 0; n < 128; ++n)
-                selected[n] = true;
-
-        ImGui::SameLine();
-
-        if (ImGui::Button ("Select none", ImVec2 (150.0f, 0.0f)))
-            for (int n = 0; n < 128; ++n)
-                selected[n] = false;
     }
 
     void drawGenerators()
     {
 
-        if (ImGui::Button ("Chromatic wheel", ImVec2 (160.0f, 0.0f)))
+        /* Four generators on one row rather than two. */
+        const ImVec2 gen (86.0f, 0.0f);
+
+        if (ImGui::Button ("Wheel", gen))
+        {
+            pushUndo();
             generateWheel (1.0f);
+        }
 
         ImGui::SameLine();
 
-        if (ImGui::Button ("Circle of fifths", ImVec2 (160.0f, 0.0f)))
+        if (ImGui::Button ("Fifths", gen))
+        {
+            pushUndo();
             generateFifths();
-
-        if (ImGui::Button ("Piano", ImVec2 (160.0f, 0.0f)))
-            generatePiano();
+        }
 
         ImGui::SameLine();
 
-        if (ImGui::Button ("Blackout", ImVec2 (160.0f, 0.0f)))
-            applyToAll (0x000000);
+        if (ImGui::Button ("Piano", gen))
+        {
+            pushUndo();
+            generatePiano();
+        }
 
-        ImGui::Spacing();
-        ImGui::SetNextItemWidth (110.0f);
+        ImGui::SameLine();
+
+        if (ImGui::Button ("Blackout", gen))
+        {
+            pushUndo();
+            applyToAll (0x000000);
+        }
+
+        ImGui::SetNextItemWidth (76.0f);
 
         /* Changing either recolours immediately. Making you blacken the keyboard,
            select the in-scale notes and then apply was three steps to express one
@@ -1003,7 +1405,7 @@ private:
             generateScale();
 
         ImGui::SameLine();
-        ImGui::SetNextItemWidth (170.0f);
+        ImGui::SetNextItemWidth (150.0f);
 
         if (ImGui::BeginCombo ("Scale", kScales[scaleIndex].name))
         {
@@ -1348,6 +1750,7 @@ private:
 
         if (ImGui::Button ("Import colours", ImVec2 (130.0f, 0.0f)))
         {
+            pushUndo();
             owner->capture->applyTo (owner->link, captureAnchor);
             appliedAnchor = captureAnchor;
             markDirty();
@@ -1457,7 +1860,8 @@ private:
         int mode = owner->link.getWavesMode();
         ImGui::SetNextItemWidth (150.0f);
 
-        if (ImGui::Combo ("Pattern", &mode, "Waves\0Aurora\0Breathing\0Ember\0"))
+        if (ImGui::Combo ("Pattern", &mode,
+                              "Waves\0Aurora\0Breathing\0Ember\0Gradient drift\0Rainfall\0"))
         {
             owner->link.setWavesMode (mode);
             markDirty();
@@ -1474,8 +1878,12 @@ private:
 
         /* Which ones keep the painted map and which replace it, because that is the
            only thing about the choice that is not obvious from watching it. */
-        ImGui::TextDisabled (mode >= 2 ? "dims your colours - keyswitches stay readable"
-                                       : "replaces your colours until a note is played");
+        /* Three kinds now, and which one you picked is the thing worth saying. */
+        ImGui::TextDisabled (mode == 2 || mode == 3
+                                 ? "dims your colours - keyswitches stay readable"
+                                 : (mode == 4 || mode == 5
+                                        ? "uses your gradient, not the painted map"
+                                        : "replaces your colours until a note is played"));
     }
 
     void drawMotionControls()
@@ -1504,11 +1912,12 @@ private:
         /* Where the wave takes its colour. Everything but Fixed derives it from the
            note that threw it, so different notes give differently coloured waves. */
         {
-            static const char *sources[] = { "Fixed", "Wheel", "Fifths", "Degree", "Map" };
+            static const char *sources[] = { "Fixed", "Wheel", "Fifths", "Degree", "Map",
+                                             "Gradient" };
             int source = owner->link.getRippleSource();
             ImGui::SetNextItemWidth (95.0f);
 
-            if (ImGui::Combo ("##ripsrc", &source, sources, 5))
+            if (ImGui::Combo ("##ripsrc", &source, sources, 6))
             {
                 owner->link.setRippleSource (source);
                 markDirty();
@@ -1519,7 +1928,10 @@ private:
                                    "Wheel: hue by pitch class\n"
                                    "Fifths: hue by position in the circle of fifths\n"
                                    "Degree: the degree colour of the note played\n"
-                                   "Map: the colour of the key it came from");
+                                   "Map: the colour of the key it came from\n"
+                                   "Gradient: the paint gradient, by where the note sits\n"
+                                   "          on the keyboard - owes the map nothing, so\n"
+                                   "          it works over Blackout, Wheel or Piano");
         }
 
         ImGui::SameLine();
@@ -1563,6 +1975,12 @@ private:
                        owner->link.getHaloColour(), 4);
         ImGui::SameLine();
         ImGui::TextDisabled ("2+ notes held");
+
+        drawEffectRow ("Sustain", owner->link.getSustainEnabled(),
+                       owner->link.getSustainColour(), 4);
+        ImGui::SameLine();
+        ImGui::TextDisabled (owner->link.getSustainDown() ? "pedal down"
+                                                          : "tints notes CC 64 is holding");
 
         bool path = owner->link.getBendPathEnabled();
 
@@ -1670,6 +2088,7 @@ private:
         {
             if (target == 2) owner->link.setAfterglowEnabled (on);
             else if (target == 3) owner->link.setPulseEnabled (on);
+            else if (target == 4) owner->link.setSustainEnabled (on);
             else owner->link.setHaloEnabled (on);
 
             markDirty();
@@ -1682,6 +2101,7 @@ private:
         {
             if (target == 2) owner->link.setAfterglowColour (picked);
             else if (target == 3) owner->link.setPulseColour (picked);
+            else if (target == 4) owner->link.setSustainColour (picked);
             else owner->link.setHaloColour (picked);
 
             markDirty();
@@ -1986,6 +2406,8 @@ private:
 
     void applyToSelection (uint32_t rgb)
     {
+        pushUndo();
+
         for (int n = 0; n < 128; ++n)
             if (selected[n])
                 owner->link.setColour (n, rgb);
@@ -2168,6 +2590,10 @@ public:
 
             double b = owner->brightness;
             double u = owner->unlitLevel;
+
+            /* Before the load, not inside it: a snapshot taken after the colours have
+               already been replaced records the new table and undoes nothing. */
+            pushUndo();
 
             if (PresetIO::load (path, owner->link, b, u))
             {

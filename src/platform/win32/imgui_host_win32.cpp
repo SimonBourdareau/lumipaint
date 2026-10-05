@@ -143,6 +143,27 @@ void renderFrame (ImGuiHostWindow *c)
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
+
+    /*
+        Modifier state, polled, because nothing else here supplies it.
+
+        The backend only updates modifiers inside its key-message case, and this window
+        forwards every key message to the host before the backend ever sees one - so
+        KeyCtrl, KeyShift and KeyAlt sat false forever and alt-drag painting could not
+        work on Windows at all, however hard anyone held alt.
+
+        Polling the four of them costs nothing and does not touch the forwarding rule:
+        modifiers are a state the editor can read, not keystrokes it takes from the DAW.
+        The X11 host does the same thing for the same reason.
+    */
+    {
+        ImGuiIO &io = ImGui::GetIO();
+        io.AddKeyEvent (ImGuiMod_Ctrl, (GetKeyState (VK_CONTROL) & 0x8000) != 0);
+        io.AddKeyEvent (ImGuiMod_Shift, (GetKeyState (VK_SHIFT) & 0x8000) != 0);
+        io.AddKeyEvent (ImGuiMod_Alt, (GetKeyState (VK_MENU) & 0x8000) != 0);
+        io.AddKeyEvent (ImGuiMod_Super, (GetKeyState (VK_LWIN) & 0x8000) != 0);
+    }
+
     ImGui::NewFrame();
 
     if (c->render != nullptr)
@@ -264,7 +285,28 @@ LRESULT CALLBACK wndProc (HWND h, UINT m, WPARAM w, LPARAM l)
         ImGui::SetCurrentContext (previous);
     }
 
-    if (isKeyMessage && ! wantsText)
+    /*
+        One chord is ours, and only while the pointer is over the editor.
+
+        Select-all has to reach the editor somehow, and claiming it outright would take
+        the DAW's own select-all for as long as the editor is open - the exact thing the
+        rule above exists to prevent. Gating on the cursor keeps it honest: the keyboard
+        belongs to whatever the user is pointing at, and pointing at the editor is the
+        only way to mean this one.
+    */
+    bool chordIsOurs = false;
+
+    if ((m == WM_KEYDOWN || m == WM_SYSKEYDOWN) && w == 'A'
+         && (GetKeyState (VK_CONTROL) & 0x8000) != 0)
+    {
+        POINT cursor;
+        RECT bounds;
+
+        if (GetCursorPos (&cursor) && GetWindowRect (h, &bounds))
+            chordIsOurs = PtInRect (&bounds, cursor) != 0;
+    }
+
+    if (isKeyMessage && ! wantsText && ! chordIsOurs)
     {
         HWND parent = GetParent (h);
 
