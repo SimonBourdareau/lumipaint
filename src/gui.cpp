@@ -1955,7 +1955,7 @@ private:
         }
 
         drawEffectRow ("Afterglow", owner->link.getAfterglowEnabled(),
-                       owner->link.getAfterglowColour(), 2);
+                       owner->link.getAfterglowColour(), kFxAfterglow);
         ImGui::SameLine();
         int decay = owner->link.getAfterglowDecay();
         ImGui::SetNextItemWidth (120.0f);
@@ -1967,17 +1967,17 @@ private:
         }
 
         drawEffectRow ("Beat pulse", owner->link.getPulseEnabled(),
-                       owner->link.getPulseColour(), 3);
+                       owner->link.getPulseColour(), kFxPulse);
         ImGui::SameLine();
         ImGui::TextDisabled ("follows host transport");
 
         drawEffectRow ("Chord halo", owner->link.getHaloEnabled(),
-                       owner->link.getHaloColour(), 4);
+                       owner->link.getHaloColour(), kFxHalo);
         ImGui::SameLine();
         ImGui::TextDisabled ("2+ notes held");
 
         drawEffectRow ("Sustain", owner->link.getSustainEnabled(),
-                       owner->link.getSustainColour(), 4);
+                       owner->link.getSustainColour(), kFxSustain);
         ImGui::SameLine();
         ImGui::TextDisabled (owner->link.getSustainDown() ? "pedal down"
                                                           : "tints notes CC 64 is holding");
@@ -2079,17 +2079,40 @@ private:
     }
 
     /* target: 2 afterglow, 3 pulse, 4 halo. */
-    void drawEffectRow (const char *label, bool enabled, uint32_t rgb, int target)
+    /*
+        Which effect a row drives, named rather than numbered.
+
+        This was a bare integer with a chain ending in else, so the last effect was
+        whatever did not match - and adding the pedal, which took the number chord halo
+        was already using, silently handed halo's checkbox to the pedal and left halo
+        with nothing to write to. Two rows toggled one setting and the other could not
+        be toggled at all.
+
+        A switch with no default means the next one of these that collides fails to
+        compile instead of quietly stealing someone else's control.
+    */
+    enum EffectTarget
+    {
+        kFxAfterglow = 0,
+        kFxPulse,
+        kFxHalo,
+        kFxSustain
+    };
+
+    void drawEffectRow (const char *label, bool enabled, uint32_t rgb, EffectTarget target)
     {
         bool on = enabled;
         ImGui::PushID (label);
 
         if (ImGui::Checkbox (label, &on))
         {
-            if (target == 2) owner->link.setAfterglowEnabled (on);
-            else if (target == 3) owner->link.setPulseEnabled (on);
-            else if (target == 4) owner->link.setSustainEnabled (on);
-            else owner->link.setHaloEnabled (on);
+            switch (target)
+            {
+                case kFxAfterglow: owner->link.setAfterglowEnabled (on); break;
+                case kFxPulse:     owner->link.setPulseEnabled (on); break;
+                case kFxHalo:      owner->link.setHaloEnabled (on); break;
+                case kFxSustain:   owner->link.setSustainEnabled (on); break;
+            }
 
             markDirty();
         }
@@ -2099,10 +2122,13 @@ private:
 
         if (drawSwatch ("fx", rgb, picked))
         {
-            if (target == 2) owner->link.setAfterglowColour (picked);
-            else if (target == 3) owner->link.setPulseColour (picked);
-            else if (target == 4) owner->link.setSustainColour (picked);
-            else owner->link.setHaloColour (picked);
+            switch (target)
+            {
+                case kFxAfterglow: owner->link.setAfterglowColour (picked); break;
+                case kFxPulse:     owner->link.setPulseColour (picked); break;
+                case kFxHalo:      owner->link.setHaloColour (picked); break;
+                case kFxSustain:   owner->link.setSustainColour (picked); break;
+            }
 
             markDirty();
         }
