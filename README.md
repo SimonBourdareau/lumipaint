@@ -118,7 +118,37 @@ hold the port at the same time.
 You should see a dim rainbow across the keys straight away. That is the program's default
 map, and it means the flash worked.
 
-### Building it yourself
+### CPU
+
+The plugin is close to free when its window is closed - a tenth of a percent of one core -
+and almost everything it costs with the window open is the editor redrawing. So the editor
+does not redraw unless something has changed.
+
+Two things decide that. The host notices input, because it has to: ImGui applies queued
+input inside `NewFrame`, so an editor that skipped a frame would never learn the pointer had
+moved and could never wake itself up. The editor notices everything else by folding the 128
+colours into one number and comparing it with last frame's, which covers notes arriving,
+effects decaying and a zone's colours changing without needing to know which happened.
+
+An editor sitting open with nothing playing and the mouse still costs about four percent of
+a core instead of sixty-six. Move the pointer and it redraws at full rate, as it must.
+
+What this does **not** do is redraw only the part that changed. An immediate-mode editor has
+no retained widgets to leave alone - every frame rebuilds the whole interface - so a change
+anywhere redraws everything. While notes are playing or a screensaver is running the colours
+change on every tick, and the saving above does not apply.
+
+Those redraws are capped at thirty a second instead of sixty, which halves that case and is
+as much as anyone can see of a keyboard mirror. Input is deliberately not capped, because a
+pointer at thirty frames feels worse than one at sixty and input frames are rare. The device
+is fed from the worker at its own rate throughout and never waits for the editor; only the
+picture of it slows down.
+
+Measured on the audio thread, `process` takes well under a microsecond against a ten
+millisecond block, so none of this was ever about the DAW's own deadline - it was about not
+spending a core on drawing the same picture sixty times a second.
+
+## Building it yourself
 
 **2. Build the plugin.**
 
@@ -434,6 +464,26 @@ What a key looks like while it is playing.
 | Control | What it does |
 | --- | --- |
 | `Incoming` | Notes arriving from the DAW use this colour rather than their own. |
+
+**Showing an arpeggiator, or anything else downstream.** An arpeggiator has to sit *after*
+LumiPaint — in front of it, every instance's notes would be arpeggiated together instead of
+each track's own — and nothing downstream ever passes back through the plugin, so those
+notes are invisible to it.
+
+The way round it is a virtual MIDI cable. Send the arpeggiator's output to a loopback port
+(loopMIDI on Windows, an IAC bus on macOS, ALSA's virmidi on Linux) and point LumiPaint's
+`Listen` selector at that port.
+
+Those notes are watched, not received. They light the keys through `Incoming` and do
+nothing else: they never re-enter the MIDI chain — the listen port is an input and nothing
+from it is ever pushed to the plugin's output — and they do not claim the keyboard, start a
+ripple, trigger afterglow or touch the sustain bookkeeping. An arpeggiator can run for
+minutes with nobody touching the track, and letting that take the device would mean
+whichever track had an arp going quietly won every argument about who owns the keyboard.
+Showing is not playing.
+
+In a shared chain they are filtered by zone like everything else, so each track's arpeggio
+shows only on the keys that track owns.
 | `Pressed` | Keys you are physically holding use this colour. Wins over `Incoming`, so a played note still reads over a busy sequence. |
 | `Pressure` | Blends toward this colour as you press harder. |
 | `Bend` | Blends toward this colour as a note bends, and lifts the key past the brightness ceiling so bend is brighter than everything else. |
@@ -489,12 +539,19 @@ and afterglow still read over it.
 | `Splash` | A chosen CC fires a wave from the middle of the instrument, brightness scaled by its value. Throttled, so a CC sweep pulses rather than flooding. The origin is taken from the blocks themselves, not from the MIDI range: one block splashes from its own centre, a chained pair from the join between them. Blocks given their own octaves are handled too — the midpoint can then fall in the gap between them, so the wave arrives at each block's inner edge at the same moment and the pair lights symmetrically. |
 | `Sustain` | Shows what the pedal is holding. A note released while CC 64 is down stays lit, because it is still sounding, and carries the sustain tint so you can tell it from a key under your finger. The whole sustained chord goes out together when the pedal rises, which is what makes a pedal lift visible. Off by default — the pedal changing the picture is a surprise unless it was asked for. |
 | `Bend path` | Bend a key and the notes between it and the pitch you are bending to light up, brightest at the target. One path per held note, so a bent chord draws all of them. Needs `Send pitch bend` on in Keybed. |
+| `Bend gradient` | Tints a sounding key by how far it is being bent. Under MPE each note is on its own channel, so each is tinted by *its own* bend — leaning on one note does not colour the rest of the chord. The tint is computed in the plugin rather than on the device, because the firmware keeps a single incoming bend value and applies it to every key the host lit; that was fine for one bend wheel and wrong for everything MPE is for. |
 | `Velocity brightness` | A held key's brightness follows how hard it was played. Needs `Incoming` and `Pressed` off, since those are applied on the device and override it. |
 
 All of these are computed in the plugin and composited over the colour table, so they work
 over an imported map.
 
 ### Screensaver
+
+The clock counts only while nothing is lit. Holding a chord is not idleness — a held key
+sends one note-on and then nothing, so a timer that watched for arriving notes would run on
+underneath it and bring the screensaver up over keys that were still down. Notes the pedal
+is holding and notes seen on the listen port count too: an arpeggiator running is the music
+playing, whoever is touching the keyboard.
 
 Runs when nothing has been played for the delay set beside it, and stops the instant a note
 arrives. It sits apart from the display effects because everything there reacts to playing
@@ -507,7 +564,7 @@ and this one only runs when nothing is.
 | `Breathing` | Your painted colours, swelling up and down together. The map is kept, not replaced, so an imported keyswitch layout stays readable while the keyboard is idle. It is sent as a single controller message rather than by repainting the keys — the device already has an unlit level, and this swells it — so it costs no note bandwidth at all and a key under your finger stays at full brightness while everything around it breathes. It scales the `Unlit level` you set rather than overriding it, so that slider stays the ceiling. |
 | `Ember` | The same swell with a per-note phase offset, so the map shimmers rather than pulsing as one slab. A hundred and twenty-eight different phases cannot be one controller value, so unlike `Breathing` this one does repaint the keys and costs what the other patterns cost. |
 | `Gradient drift` | Your paint gradient scrolling along the keybed. The only pattern whose palette is yours rather than chosen for you — change the gradient and the screensaver changes with it. The stops are read as a loop, so the last blends back round to the first and the drift travels one way for ever with no seam. |
-| `Rainfall` | Keys lighting one at a time and fading, nothing else lit — about one key in five at any moment. The only pattern with no continuous field, so it is the quiet one, and the cheapest: only the handful currently fading need resending. Each key keeps its own interval and its own colour from the gradient, so the keyboard has a consistent character rather than flickering through the whole palette. Looks best over `Blackout`. |
+| `Rainfall` | Drops landing and fading, nothing else lit. Each drop splashes two keys either side as it lands, a fraction later and a third dimmer per key out, so it reads as spreading from where it fell rather than five keys switching on at once. Where two drops overlap the keys between them carry both colours, averaged by how strongly each arrives and brightened by the sum — the way two crossing ripples do. Drops fall every three to ten seconds per key, and the fade is stepped rather than smooth — a splash covers five keys, so drops at the rate single keys used to fall put most of the keyboard in motion at once, and a smooth decay rewrites every lit key on every tick for a shade nobody can see. Together those are four times less traffic to the device for the same pattern. Each key keeps its own interval and its own colour from the gradient, so the keyboard has a consistent character rather than flickering through the whole palette. Looks best over `Blackout`. |
 
 `Waves`, `Aurora`, `Gradient drift` and `Rainfall` replace the colour table until a note
 is played. `Breathing` and `Ember` keep it and move only its brightness, never all the way
@@ -543,6 +600,108 @@ G8. It is not a setting. A setting for this can only ever be set wrong, and bein
 looks exactly like the anchor being wrong.
 
 ---
+
+## Sharing one chain
+
+Several instances can divide one keyboard between them. Tick **Share the chain** and each
+takes a range of notes; notes outside it are ignored by that instance, so every track
+lights only its own keys.
+
+Ticking `Share` in the top bar takes the largest stretch nobody else has, so a second or
+third track joining an already-divided chain lands somewhere sensible rather than being
+refused.
+
+The ranges are drawn as bars directly under the keys they cover — yours highlighted,
+everyone else's grey, and the one that is sending marked `master`. **Alt-drag along that
+bar** to set this instance's range; direction does not matter, and a range that collides
+turns red under the pointer rather than at the end of the drag. A range in the abstract
+means nothing; what matters is which keys it covers, and the keyboard is right there.
+
+**Where a zone's keys play is separate from where they are.** Under the zone bar is an
+offset in semitones, and beside it a line reading `keys C4-B4 play C2-B2`. The keys are
+where your hands go; the notes are what the track receives and what the colour map is
+written in.
+
+That is what makes a captured keyboard usable. A plugin whose keyswitches live at C2-B2
+can be put under the keys at C4-B4 where you can actually reach them, and the colours
+travel with it — the map belongs to the sound, not to the key positions. It also lets two
+tracks be played the same notes from different parts of the keyboard: one octave driving a
+bass, another driving a pad, both sending C2-B2 to their own track.
+
+Semitones rather than octaves, because captured ranges are not whole octaves — C2 to E3 is
+sixteen. The key range and the note range are always the same length; the offset is the
+distance between them.
+
+The hardware's `Octave` control is pinned while sharing, and says so. It shifts which notes
+the device reports for a given key, which would move every zone's mapping underneath it at
+once — one control quietly undoing what each instance was set to.
+
+A zone is a share of the instrument as much as of the lights: notes outside it are not
+passed on to whatever follows LumiPaint on that track, so four tracks splitting an
+arrangement each play only their own range instead of four copies of the whole thing.
+Only notes are filtered — pitch bend, pressure, the sustain pedal and everything else
+carry on through, since they are not addressed to a key and dropping a pedal because of
+a range would be worse than the problem it solves.
+
+Ranges are in **note numbers**, not blocks or key offsets, so the octave buttons on the
+hardware scroll the chain across your zones rather than moving them. Four instances can
+cover all 128 notes with a single two-octave block and the buttons walk it along.
+
+**Overlap is refused, not resolved.** Two instances lighting one key is a mistake, and the
+moment to say so is when the second one asks — the strip turns the blocking range red and
+the request is rejected.
+
+A range outlives silence. Ownership of the keyboard expires in seconds, because it follows
+activity and a dead owner must not hold the device; a range is a decision you made, and it
+survives a track going quiet, being deactivated, or its editor being closed. It is given up
+when the instance goes, and otherwise expires only after two minutes with nothing running
+at all — long enough that no gap in a session touches it, short enough that a rebooted
+machine does not come back to a table of ranges owned by nobody.
+
+**The zoned instances are one claimant.** Activity on any of them keeps the group on the
+keyboard; they do not take it from each other. An un-zoned instance that is played takes
+the device outright and the group stands down — its zones are untouched, it simply stops
+sending until it wins back, and then resumes exactly where it was.
+
+The screensaver belongs to whoever is sending. One keyboard going idle is one picture, and
+members each starting their own — on their own idle clocks, reset by whatever reached their
+own zone — would have made several, with a seam at every boundary and a drifting pattern
+restarting at each one. Members publish their maps as usual and the sender lays the pattern
+over the whole assembled chain.
+
+`Hold` and `Share` are mutually exclusive, and each greys the other out. Hold says this
+instance keeps the whole keyboard whatever happens; Share says it takes a slice and leaves
+the rest. Both at once is not a state with a meaning.
+
+One instance sends for the group, chosen as the lowest live zone owner. Every member works
+that out from the same table, so there is nothing to elect and nothing to hand over when
+one closes.
+
+**Ripples cross boundaries, and only the sender draws them.** A wave travels as an event
+carrying the speed, trail and colour its own instance resolved; members post and draw
+nothing, so a wave appears once rather than twice with the two halves drifting apart as
+they age. The sender lays them over the assembled keyboard *after* every zone is in place,
+which is what lets one cross from a range into its neighbour — including the sender's own,
+since by that point its range is just another part of the picture.
+
+Everything else stays inside the zone that owns it. Afterglow, halo, bend path and the rest
+are properties of the keys they touch, and they arrive already painted into each member's
+zone.
+
+**Beat pulse is the exception that is chain-wide.** A bar is a property of the music, not of
+a range, so switching the pulse on in any one instance flashes the whole keyboard rather
+than one slice of it.
+
+The one thing LumiPaint cannot do for you is make your DAW deliver MIDI to every track —
+a plugin cannot arm its own track. Enable input monitoring on each track in the chain, or
+only the armed one will light.
+
+It can at least tell you when that has happened. An instance that has a zone, has received
+nothing for a while, and can see that the other members *are* receiving says so in the
+panel rather than leaving you with a stretch of dark keys that looks identical to a zone
+set wrongly. It will not cry wolf: silence everywhere just means nobody is playing, and
+there is a grace period after claiming so a freshly opened project does not warn on every
+track before you have touched one.
 
 ## Several instances
 

@@ -142,7 +142,7 @@ const uint32_t kStateMagic   = 0x4c554d31;
     itself. The descriptor said 0.1.0 while the first release was tagged v1.0.0, which is
     exactly the kind of small lie that wastes someone's afternoon.
 */
-const char * const kPluginVersion = "1.0.2";
+const char * const kPluginVersion = "1.1.0";
 
 /*
     A paint gradient, as a handful of colour stops.
@@ -155,7 +155,10 @@ const char * const kPluginVersion = "1.0.2";
 */
 const int kGradientStops = 8;
 
-const uint32_t kStateVersion = 27;
+/* No note is currently held on this key. */
+const int kNoOffset = 1000;
+
+const uint32_t kStateVersion = 28;
 
 enum ParamId
 {
@@ -209,6 +212,9 @@ public:
        and saving work against. */
     uint32_t getDisplayColour (int note) const;
     void publishLitBits (uint64_t low, uint64_t high);
+    /* A note seen on the listen port rather than through the host - an arpeggiator
+       or anything else downstream, fed back on a virtual cable. */
+    void externalNote (int note, bool on);
     void setExternalLit (int note, bool isLit);
     void clearExternalLit();
     void setBrightness (double normalised);
@@ -361,6 +367,69 @@ public:
     int getSplashTrail() const;
     /* The middle of the instrument, which is where a splash starts. Public so the
        editor can show it rather than guess. */
+    /*
+        Zoning: this instance owns a stretch of notes, and shares the chain.
+
+        The range is in note numbers, so the octave buttons scroll the hardware across
+        it rather than moving it. Setting a range that overlaps a live zone is refused,
+        and the range that blocked it is reported so the editor can point at it.
+    */
+    void setZoned (bool on);
+    bool getZoned() const;
+    bool setZoneRange (int low, int high, ZoneInfo &blocker);
+    int getZoneLow() const;
+    int getZoneHigh() const;
+    bool noteInZone (int note) const;
+    bool hasZone() const;
+
+    /*
+        A zone is a range of keys and the notes those keys play.
+
+        The two used to be the same number. Separating them is what lets a captured
+        keyboard that wants C2-B2 sit under the keys at C4-B4, and what lets two tracks
+        be played the same notes from different parts of the keyboard. The offset is in
+        semitones because the ranges people capture are not whole octaves - C2 to E3 is
+        sixteen.
+
+        Key space is what the hardware and the editor's keyboard use; note space is what
+        the colour map and the track see. keyToNote and noteToKey are the only places
+        that conversion happens.
+    */
+    void setZoneOffset (int semitones);
+    int getZoneOffset() const;
+
+    int keyToNote (int key) const;
+    int noteToKey (int note) const;
+
+    /* The map as seen from a key, which is what the editor paints on. */
+    void setKeyColour (int key, uint32_t rgb);
+    uint32_t getKeyColour (int key) const;
+    void noteReachedZone();
+    void renewZone();
+
+    /* No MIDI is reaching this track while it is reaching the others - almost always a
+       track that was never given an input. */
+    bool zoneStarved() const;
+
+    /* The chain as every member sees it, for drawing it. */
+    bool zoneAt (int index, ZoneInfo &info) const;
+    bool isZoneSender() const;
+
+    /* This instance's id, and whichever one is currently sending, so the editor can
+       mark the master without working the rule out for itself. */
+    uint32_t selfId() const;
+    uint32_t senderId() const;
+
+    enum { kEffectRipple = 0, kEffectPulse = 1 };
+
+    static uint64_t packEffect (int note, int level, uint32_t tint, int speed, int trail,
+                                int kind);
+    static void unpackEffect (uint64_t packed, int &note, int &level, uint32_t &tint,
+                              int &speed, int &trail, int &kind);
+    uint32_t resolveRippleTint (int note) const;
+    void startChainRipple (int note, int level, uint32_t tint, int speed, int trail);
+    void overlayRipples();
+
     int splashOrigin() const;
 
     /* 60..255 while breathing runs, 255 otherwise. The unlit CC and the editor's
@@ -498,6 +567,8 @@ public:
        which has no other business being reachable from the editor. */
     bool writeClipboard (const std::string &text);
     bool readClipboard (std::string &text) const;
+    uint32_t screensaverColour (int note, uint32_t under) const;
+    bool anyNoteSounding() const;
     bool wavesRunning() const;
 
     /*
@@ -511,6 +582,11 @@ public:
     void setBendPathColour (uint32_t rgb);
     uint32_t getBendPathColour() const;
     void noteOnChannel (int channel, int note, bool on);
+
+    /* Per-note bend, as a CLAP host sends it. Falls back to the note's channel when the
+       host bends by channel instead. */
+    void tuningOnNote (int note, double semitones);
+    int bendCentsForNote (int note) const;
     void bendOnChannel (int channel, int value);
     void tuningOnChannel (int channel, double semitones);
 
@@ -696,6 +772,12 @@ private:
        4 gradient drift, 5 rainfall. */
     std::atomic<int> wavesMode;
 
+    std::atomic<int> zoned;
+    std::atomic<int> zoneLow;
+    std::atomic<int> zoneHigh;
+    std::atomic<int> zoneHeld;
+    std::atomic<int> zoneOffset;
+
     std::atomic<int> sustainHeld;
     std::atomic<int> sustainEnabled;
     std::atomic<uint32_t> sustainColour;
@@ -712,6 +794,7 @@ private:
     /* Which channel each held note is on, so every held note gets its own path rather
        than only the last one to arrive. */
     std::atomic<int> noteChannel[128];
+    std::atomic<int> noteBendCents[128];
     std::atomic<int> channelBend[16];
     std::atomic<int> lastBendCents;
     std::atomic<int> lastBendNote;
@@ -856,6 +939,10 @@ struct LumiPaint
     */
     bool sustainDown = false;
     int pendingRelease[128] = { 0 };
+
+    /* The offset each held key went out with, so its note-off matches its note-on even
+       if the zone moved in between. */
+    int sentOffset[128];
     uint64_t litBits[2];
     double brightness;
     double unlitLevel;

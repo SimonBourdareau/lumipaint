@@ -67,3 +67,18 @@ void imguiHostHide (ImGuiHostWindow *window);
 /* Optional. Not passed to imguiHostCreate so that the existing signature, and every
    caller of it, stays as it is. */
 void imguiHostSetAfterFrame (ImGuiHostWindow *window, ImGuiHostAfterFrameFn afterFrame);
+
+/*
+    Asked before each frame, and the frame is skipped when it says no.
+
+    An editor that redraws whether or not anything has changed spends most of its time
+    drawing the same picture again. The plugin is nearly free when its window is closed
+    and expensive when it is open, and almost all of that is frames nobody asked for.
+
+    Returning false skips the frame entirely - no new frame, no draw, no swap - and
+    leaves whatever was last drawn on screen, which is the same picture it would have
+    produced anyway.
+*/
+typedef bool (*ImGuiHostShouldRenderFn) (void *userData);
+
+void imguiHostSetShouldRender (ImGuiHostWindow *window, ImGuiHostShouldRenderFn fn);

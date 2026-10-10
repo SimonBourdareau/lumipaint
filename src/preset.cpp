@@ -330,6 +330,9 @@ std::string PresetIO::toText (const LumiLink &link,
     out << "pulse " << (link.getPulseEnabled() ? 1 : 0) << '\n';
     out << "halo " << (link.getHaloEnabled() ? 1 : 0) << '\n';
     out << "sustain " << (link.getSustainEnabled() ? 1 : 0) << '\n';
+    out << "zone " << (link.getZoned() ? 1 : 0) << ' '
+        << link.getZoneLow() << ' ' << link.getZoneHigh() << ' '
+        << link.getZoneOffset() << '\n';
     out << "degrees " << (link.getDegreeEnabled() ? 1 : 0) << '\n';
     out << "degrees-strength " << link.getDegreeAlpha() << '\n';
     out << "tension " << (link.getTensionEnabled() ? 1 : 0) << '\n';
@@ -442,6 +445,31 @@ bool PresetIO::fromText (const std::string &text, LumiLink &link,
         else if (key == "pulse") { int v; parts >> v; link.setPulseEnabled (v != 0); }
         else if (key == "halo") { int v; parts >> v; link.setHaloEnabled (v != 0); }
         else if (key == "sustain") { int v; parts >> v; link.setSustainEnabled (v != 0); }
+        else if (key == "zone")
+        {
+            /* A map carries the range, not the claim. Loading one asks for it the same
+               way the editor does, and an overlap refuses it rather than taking keys
+               another instance already owns. */
+            /* The offset is optional, so a map written before it existed still loads
+               and simply plays where it sits. */
+            int on = 0, low = 0, high = 127, shift = 0;
+            parts >> on >> low >> high >> shift;
+
+            if (on != 0)
+            {
+                ZoneInfo blocker;
+                link.setZoned (true);
+
+                if (link.setZoneRange (low, high, blocker))
+                    link.setZoneOffset (shift);
+                else
+                    link.setZoned (false);
+            }
+            else
+            {
+                link.setZoned (false);
+            }
+        }
         else if (key == "degrees") { int v; parts >> v; link.setDegreeEnabled (v != 0); }
         else if (key == "degrees-strength") { int v; parts >> v; link.setDegreeAlpha (v); }
         else if (key == "tension") { int v; parts >> v; link.setTensionEnabled (v != 0); }

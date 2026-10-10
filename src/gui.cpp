@@ -28,6 +28,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <cfloat>
 
 namespace lumipaint {
 namespace {
@@ -235,6 +236,7 @@ public:
             for (int n = 0; n < 128; ++n)
                 selected[n] = true;
 
+        trimSelectionToZone();
         drawKeyboard();
         ImGui::Separator();
 
@@ -375,7 +377,7 @@ private:
     void restoreColours (const ColourSnapshot &shot)
     {
         for (int n = 0; n < 128; ++n)
-            owner->link.setColour (n, shot.note[n]);
+            setColourIfOwned (n, shot.note[n]);
 
         markDirty();
     }
@@ -639,12 +641,218 @@ private:
         ImGui::SameLine (0.0f, 20.0f);
         bool hold = owner->link.getHoldDevice();
 
+        /*
+            Hold and Share answer the same question and give opposite answers.
+
+            Hold says this instance keeps the whole keyboard whatever else happens;
+            Share says it takes a slice and leaves the rest to others. Both at once is
+            not a state with a meaning, so turning one on turns the other off rather
+            than leaving the user to work out which won.
+        */
+        ImGui::BeginDisabled (owner->link.getZoned());
+
         if (ImGui::Checkbox ("Hold", &hold))
+        {
             owner->link.setHoldDevice (hold);
+
+            if (hold && owner->link.getZoned())
+                owner->link.setZoned (false);
+        }
+
+        ImGui::EndDisabled();
 
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip ("Keep the keyboard on this instance instead of letting\n"
                                "whichever track you play take it");
+
+        /*
+            Sharing sits beside Hold because they answer the same question - who gets
+            the keyboard - and because the range itself is now set on the keyboard,
+            which left nothing for a section of its own to hold.
+        */
+        ImGui::SameLine (0.0f, 20.0f);
+        bool sharing = owner->link.getZoned();
+
+        ImGui::BeginDisabled (owner->link.getHoldDevice());
+
+        if (ImGui::Checkbox ("Share", &sharing))
+        {
+            if (sharing)
+                owner->link.setHoldDevice (false);
+
+            owner->link.setZoned (sharing);
+
+            if (sharing)
+                takeFreeRange();
+
+            markDirty();
+        }
+
+        ImGui::EndDisabled();
+
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip ("Split the keyboard between instances.\n"
+                               "Alt-drag the bar under the keys to set this one's range.\n"
+                               "Ticking this takes the largest free stretch to begin with.");
+
+        if (sharing)
+        {
+            ImGui::SameLine();
+
+            if (! owner->link.hasZone())
+                ImGui::TextColored (ImVec4 (1.0f, 0.55f, 0.25f, 1.0f), "no range");
+            else if (owner->link.zoneStarved())
+                ImGui::TextColored (ImVec4 (1.0f, 0.55f, 0.25f, 1.0f), "no MIDI on this track");
+            else
+                ImGui::TextDisabled (owner->link.isZoneSender() ? "master" : "member");
+
+        }
+    }
+
+    /*
+        Which instance owns which keys, drawn under the keys themselves.
+
+        The ranges mean nothing in the abstract - what matters is which keys they cover,
+        and the keyboard is right there. A bar under the keys says it without anyone
+        having to read two numbers and count octaves, and alt-dragging along it is the
+        same gesture as reading it.
+
+        Alt, not a plain drag, because a plain drag on the keybed above already selects
+        and this sits directly beneath it. Alt is also what paints, but painting only
+        happens on the keys; down here it is unambiguous.
+    */
+    void drawZoneBars (const ImVec2 &origin, int firstWhite, float whiteHeight,
+                       float totalWidth)
+    {
+        ImDrawList *draw = ImGui::GetWindowDrawList();
+        const float top = origin.y + whiteHeight + 30.0f;
+        const float height = 14.0f;
+
+        ImGui::SetCursorScreenPos (ImVec2 (origin.x, top));
+        ImGui::InvisibleButton ("zonebar", ImVec2 (totalWidth, height));
+
+        const bool sharing = owner->link.getZoned();
+
+        if (sharing && ImGui::IsItemActive() && ImGui::GetIO().KeyAlt)
+        {
+            const float startX = ImGui::GetIO().MouseClickedPos[0].x;
+            const float nowX = ImGui::GetIO().MousePos.x;
+
+            requestZone (noteAtBarX (startX, origin.x, firstWhite),
+                         noteAtBarX (nowX, origin.x, firstWhite));
+        }
+
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip (sharing ? "alt-drag to set this instance's range"
+                                       : "sharing is off - this instance owns the whole keyboard");
+
+        /*
+            Where the zone's keys play, under the bar that says which keys they are.
+
+            A captured keyboard wants the notes it was written for; the keys you want it
+            under are wherever your hands reach. The offset is the distance between the
+            two, in semitones rather than octaves because captured ranges are not whole
+            octaves - C2 to E3 is sixteen.
+        */
+        if (sharing && owner->link.hasZone())
+        {
+            ImGui::SetCursorScreenPos (ImVec2 (origin.x, top + height + 4.0f));
+            ImGui::SetNextItemWidth (80.0f);
+
+            int shift = owner->link.getZoneOffset();
+
+            if (ImGui::DragInt ("##zoneoffset", &shift, 0.2f, -60, 60, "%+d st"))
+            {
+                owner->link.setZoneOffset (shift);
+                markDirty();
+            }
+
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip ("How far the notes sit from the keys.\n"
+                                   "The colour map moves with them.");
+
+            const int lowNoteOut = zoneLow + shift;
+            const int highNoteOut = zoneHigh + shift;
+
+            ImGui::SameLine();
+
+            if (lowNoteOut < 0 || highNoteOut > 127)
+            {
+                ImGui::TextColored (ImVec4 (1.0f, 0.55f, 0.25f, 1.0f),
+                                    "keys %s%d-%s%d play off the end of MIDI",
+                                    kNoteNames[pitchClassOf (zoneLow)], octaveOf (zoneLow),
+                                    kNoteNames[pitchClassOf (zoneHigh)], octaveOf (zoneHigh));
+            }
+            else
+            {
+                ImGui::TextDisabled ("keys %s%d-%s%d  play  %s%d-%s%d",
+                                     kNoteNames[pitchClassOf (zoneLow)], octaveOf (zoneLow),
+                                     kNoteNames[pitchClassOf (zoneHigh)], octaveOf (zoneHigh),
+                                     kNoteNames[pitchClassOf (lowNoteOut)], octaveOf (lowNoteOut),
+                                     kNoteNames[pitchClassOf (highNoteOut)], octaveOf (highNoteOut));
+            }
+        }
+
+        draw->AddRectFilled (ImVec2 (origin.x, top), ImVec2 (origin.x + totalWidth, top + height),
+                             IM_COL32 (16, 16, 20, 255));
+
+        if (! sharing)
+            return;
+
+        const uint32_t me = owner->link.selfId();
+
+        for (int i = 0; i < kMaxZones; ++i)
+        {
+            ZoneInfo info;
+
+            if (! owner->link.zoneAt (i, info))
+                continue;
+
+            const int from = info.low < lowNote ? lowNote : info.low;
+            const int to = info.high > highNote ? highNote : info.high;
+
+            if (to < from)
+                continue;
+
+            const float x0 = origin.x + (float) (whiteIndexForNote (from) - firstWhite) * whiteKeyWidth;
+            const float x1 = origin.x + (float) (whiteIndexForNote (to) - firstWhite + 1) * whiteKeyWidth;
+
+            const bool mine = info.owner == me;
+            const bool blocking = zoneBlocker.owner == info.owner && zoneBlocker.owner != 0;
+
+            const ImU32 fill = blocking ? IM_COL32 (210, 60, 50, 230)
+                                        : (mine ? IM_COL32 (90, 170, 255, 235)
+                                                : IM_COL32 (96, 100, 112, 200));
+
+            draw->AddRectFilled (ImVec2 (x0, top + 2.0f), ImVec2 (x1, top + height - 2.0f),
+                                 fill, 2.0f);
+
+            /* The one that sends is marked, because when something is wrong it is the
+               first thing worth knowing and nothing else on screen says it. */
+            if (info.owner == owner->link.senderId())
+                draw->AddText (ImVec2 (x0 + 4.0f, top - 1.0f),
+                               IM_COL32 (255, 255, 255, 230), "master");
+            else if (mine)
+                draw->AddText (ImVec2 (x0 + 4.0f, top - 1.0f),
+                               IM_COL32 (180, 210, 255, 220), "this one");
+        }
+    }
+
+    /* Nearest note to a point along the bar, by white key, which is how the bar is
+       drawn and so how it reads. */
+    int noteAtBarX (float x, float originX, int firstWhite) const
+    {
+        int index = firstWhite + (int) ((x - originX) / whiteKeyWidth);
+        const int lastWhite = whiteIndexForNote (highNote);
+
+        if (index < firstWhite) index = firstWhite;
+        if (index > lastWhite) index = lastWhite;
+
+        for (int note = lowNote; note <= highNote; ++note)
+            if (! kIsBlackKey[pitchClassOf (note)] && whiteIndexForNote (note) == index)
+                return note;
+
+        return lowNote;
     }
 
     void drawKeyboard()
@@ -656,14 +864,25 @@ private:
         const float blackHeight = whiteHeight * 0.62f;
         const float blackWidth = whiteKeyWidth * 0.62f;
 
-        ImGui::BeginChild ("keyboard", ImVec2 (0.0f, whiteHeight + 40.0f), 0,
+        ImGui::BeginChild ("keyboard", ImVec2 (0.0f, whiteHeight + 104.0f), 0,
                            ImGuiWindowFlags_HorizontalScrollbar);
 
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         ImDrawList *draw = ImGui::GetWindowDrawList();
 
         ImGui::InvisibleButton ("keybed", ImVec2 (totalWidth, whiteHeight));
+
+        /*
+            The keybed's own state, read before anything else is submitted.
+
+            IsItemClicked and IsItemActive answer for the last item, and the zone bar
+            below is submitted between this and the places that used to ask - so every
+            click and drag test on the keys was quietly reading the bar's state instead.
+            Taken here, while this is still the last item, and used by value afterwards.
+        */
         const bool hovered = ImGui::IsItemHovered();
+        const bool keybedClicked = ImGui::IsItemClicked (ImGuiMouseButton_Left);
+        const bool keybedActive = ImGui::IsItemActive();
         const ImVec2 mouse = ImGui::GetIO().MousePos;
 
         int hitNote = -1;
@@ -769,7 +988,7 @@ private:
             }
         }
 
-        if (hitNote >= 0 && ImGui::IsItemClicked (ImGuiMouseButton_Left))
+        if (hitNote >= 0 && keybedClicked)
             applyClick (hitNote);
 
         /*
@@ -779,12 +998,14 @@ private:
             time would need forty presses of the arrow to get back. IsItemClicked fires
             once at the start of the drag, IsItemActive stays true for the rest of it.
         */
-        if (hitNote >= 0 && ImGui::GetIO().KeyAlt
-             && ImGui::IsItemClicked (ImGuiMouseButton_Left))
+        if (hitNote >= 0 && ImGui::GetIO().KeyAlt && keybedClicked)
             pushUndo();
 
-        if (hitNote >= 0 && ImGui::IsItemActive() && ImGui::GetIO().KeyAlt)
+        if (hitNote >= 0 && keybedActive && ImGui::GetIO().KeyAlt)
             paintNote (hitNote);
+
+        /* Submitted last, so nothing above it is asking ImGui about the wrong item. */
+        drawZoneBars (origin, firstWhite, whiteHeight, totalWidth);
 
         ImGui::EndChild();
 
@@ -819,6 +1040,22 @@ private:
         const ImVec2 br (x + width - 1.0f, y + height);
 
         draw->AddRectFilled (tl, br, rgbToImU32 (rgb, lit ? 1.0f : restAlpha), 2.0f);
+
+        /*
+            A key belonging to another instance is struck through.
+
+            It already draws black, because this instance composites nothing outside its
+            range - but black is also a colour somebody might have painted, so on its own
+            it says nothing about why. A line across it says the key is not this
+            instance's to touch, which is the question anyone clicking it is asking.
+        */
+        if (owner->link.getZoned() && ! paintable (note))
+        {
+            draw->AddRectFilled (tl, br, IM_COL32 (18, 18, 22, 210), 2.0f);
+            draw->AddLine (ImVec2 (tl.x + 2.0f, (tl.y + br.y) * 0.5f),
+                           ImVec2 (br.x - 2.0f, (tl.y + br.y) * 0.5f),
+                           IM_COL32 (90, 94, 104, 190), 1.0f);
+        }
 
         /* Outside the window the hardware shows nothing, so say so rather than
            implying these keys are lit somewhere. */
@@ -915,6 +1152,9 @@ private:
 
     void applyClick (int note)
     {
+        if (! paintable (note))
+            return;
+
         const ImGuiIO &io = ImGui::GetIO();
 
         if (io.KeyShift && anchorNote >= 0)
@@ -966,11 +1206,11 @@ private:
 
             for (int n = 0; n < 128; ++n)
                 if (pitchClassOf (n) == pc)
-                    owner->link.setColour (n, rgb);
+                    setColourIfOwned (n, rgb);
         }
         else
         {
-            owner->link.setColour (note, rgb);
+            setColourIfOwned (note, rgb);
         }
 
         markDirty();
@@ -1033,7 +1273,7 @@ private:
             selected[n] = pressed[n];
 
             if (pressed[n])
-                owner->link.setColour (n, rgb);
+                setColourIfOwned (n, rgb);
         }
 
         markDirty();
@@ -1064,7 +1304,7 @@ private:
         for (int i = 0; i < total; ++i)
         {
             const float position = total > 1 ? (float) i / (float) (total - 1) : 0.0f;
-            owner->link.setColour (notes[i], owner->link.gradientAt (position));
+            setColourIfOwned (notes[i], owner->link.gradientAt (position));
         }
 
         markDirty();
@@ -1224,6 +1464,98 @@ private:
         ImGui::EndDisabled();
     }
 
+    /*
+        Zones: this instance's share of the chain, and everyone else's.
+
+        The chain strip is the part that matters. Refusing an overlap is only half an
+        answer - without seeing where the other zones are, the only way to find a free
+        range is to keep guessing, so every live zone is drawn across the full note
+        range with this instance's own highlighted and the one that refused a request
+        shown in red until the next attempt.
+    */
+    /*
+        The longest stretch nobody else has.
+
+        Also what ticking the box asks for. Asking for the whole keyboard - which the
+        editor's fields default to - is refused the moment anybody else is sharing, and
+        a refused instance owns nothing and lights nothing. Joining a chain should put
+        you somewhere sensible rather than nowhere.
+    */
+    void takeFreeRange()
+    {
+            bool taken[128] = { false };
+
+            for (int i = 0; i < kMaxZones; ++i)
+            {
+                ZoneInfo info;
+
+                if (! owner->link.zoneAt (i, info))
+                    continue;
+
+                if (info.low == zoneLow && info.high == zoneHigh)
+                    continue;
+
+                for (int n = info.low; n <= info.high && n < 128; ++n)
+                    if (n >= 0)
+                        taken[n] = true;
+            }
+
+            int bestLow = -1, bestHigh = -1, runStart = -1;
+
+            for (int n = 0; n <= 128; ++n)
+            {
+                const bool free = n < 128 && ! taken[n];
+
+                if (free && runStart < 0)
+                    runStart = n;
+
+                if (! free && runStart >= 0)
+                {
+                    if (bestLow < 0 || (n - 1 - runStart) > (bestHigh - bestLow))
+                    {
+                        bestLow = runStart;
+                        bestHigh = n - 1;
+                    }
+
+                    runStart = -1;
+                }
+            }
+
+            if (bestLow >= 0)
+                requestZone (bestLow, bestHigh);
+    }
+
+
+    /*
+        Ask for a range, and remember what refused it.
+
+        One place, because the strip, the number fields and the two buttons all want the
+        same thing to happen - including keeping the fields showing what was asked for
+        rather than snapping back, so a refused range can be nudged clear rather than
+        typed again from scratch.
+    */
+    void requestZone (int low, int high)
+    {
+        if (low > high)
+        {
+            const int swap = low;
+            low = high;
+            high = swap;
+        }
+
+        zoneLow = low < 0 ? 0 : low;
+        zoneHigh = high > 127 ? 127 : high;
+
+        ZoneInfo blocker;
+        zoneBlocker.owner = 0;
+
+        if (! owner->link.setZoneRange (zoneLow, zoneHigh, blocker))
+            zoneBlocker = blocker;
+
+        markDirty();
+    }
+
+
     uint32_t currentPickerRgb() const
     {
         return (((uint32_t) (pickerColour[0] * 255.0f + 0.5f)) << 16)
@@ -1268,7 +1600,7 @@ private:
         if (ImGui::Button ("Set this note", ImVec2 (150.0f, 0.0f)))
         {
             pushUndo();
-            owner->link.setColour (anchorNote, currentPickerRgb());
+            setColourIfOwned (anchorNote, currentPickerRgb());
             markDirty();
         }
 
@@ -1648,11 +1980,18 @@ private:
        rather than for plugins that just draw a plain piano. */
     void drawCaptureControls()
     {
+        /*
+            Asked for here, done after the frame.
+
+            Enumerating windows and reading one are the same hazard the file dialogs
+            were: PrintWindow makes another application draw and can pump its message
+            loop, and doing that between NewFrame and Render - with this plugin's GL
+            context current - lets the host paint into it. The symptom is the editor
+            and the host going black, which is exactly what the dialogs used to do
+            before they were moved out of the frame.
+        */
         if (ImGui::Button ("Find windows", ImVec2 (110.0f, 0.0f)))
-        {
-            owner->capture->refreshWindows();
-            captureIndex = 0;
-        }
+            pendingCapture = 1;
 
         ImGui::SameLine();
         const auto &wins = owner->capture->windows();
@@ -1670,29 +2009,7 @@ private:
         }
 
         if (ImGui::Button ("Read keyboard", ImVec2 (110.0f, 0.0f)) && ! wins.empty())
-        {
-            /*
-                The title is remembered only when the grab worked.
-
-                It was indented as though it were inside this block and was not, so a
-                failed grab still recorded the title - and refindWindow would then spend
-                every later attempt chasing a window that had never been read
-                successfully in the first place.
-
-                The index is compared as a size_t as well. Against an unsigned size a
-                negative index converts to something enormous and passes the test, which
-                is the one case the check exists to stop.
-            */
-            if (owner->capture->grab ((size_t) captureIndex))
-            {
-                owner->capture->detect();
-
-                const std::vector<CaptureWindow> &found = owner->capture->windows();
-
-                if (captureIndex >= 0 && (size_t) captureIndex < found.size())
-                    owner->capture->rememberTitle (found[captureIndex].title);
-            }
-        }
+            pendingCapture = 2;
 
         ImGui::SameLine();
         ImGui::TextDisabled ("%s", owner->capture->status().c_str());
@@ -2170,7 +2487,7 @@ private:
                 const int old = appliedAnchor + semi;
 
                 if (old >= 0 && old < 128)
-                    owner->link.setColour (old, 0);
+                    setColourIfOwned (old, 0);
             }
         }
 
@@ -2404,6 +2721,19 @@ private:
 
     void drawOctaveControl()
     {
+        /*
+            Pinned while the keyboard is shared.
+
+            This shifts which notes the device reports for a given key. With zones that
+            would move every zone's key-to-note mapping underneath it at once - one
+            control quietly undoing what each instance had been set to individually.
+            The per-zone offset under the keyboard is the one to use instead, and the
+            hardware's own octave buttons are inert for the same reason.
+        */
+        const bool pinned = owner->link.hasZone();
+
+        ImGui::BeginDisabled (pinned);
+
         int oct = (int) owner->octave;
         ImGui::SetNextItemWidth (240.0f);
 
@@ -2417,6 +2747,12 @@ private:
 
         if (ImGui::IsItemDeactivatedAfterEdit())
             pushGuiParam (owner, kParamOctave, (double) oct, false, true);
+
+        ImGui::EndDisabled();
+
+        if (pinned)
+            ImGui::TextDisabled ("pinned while sharing - use the zone offset");
+
     }
 
     void drawFoldControl()
@@ -2430,13 +2766,56 @@ private:
         }
     }
 
+    /*
+        Whether this instance may paint a key at all.
+
+        Sharing the chain means owning a stretch of notes, and a key outside it is drawn
+        black whatever the map says - so letting the editor paint one is offering a
+        control that does nothing. Worse than nothing: the colour is stored, the key
+        stays dark, and the obvious conclusion is that painting is broken.
+
+        One gate, used by everything that writes a colour or changes the selection, so
+        there is no path that can quietly bypass it.
+    */
+    /*
+        Everything the editor paints is addressed by key, not by note.
+
+        The keyboard on screen is the hardware's keys, and so is the selection taken
+        from it. With a zone offset the map entry those keys read lives elsewhere, so
+        the write goes through setKeyColour - which is the one place the two coordinate
+        systems meet. Without it, clicking a key would colour whatever note happens to
+        share its number and the keyboard would appear to paint somewhere else.
+    */
+    void setColourIfOwned (int key, uint32_t rgb)
+    {
+        if (paintable (key))
+            owner->link.setKeyColour (key, rgb);
+    }
+
+    bool paintable (int note) const
+    {
+        return note >= 0 && note < 128 && owner->link.noteInZone (note);
+    }
+
+    /* Selection can only ever hold keys this instance owns, so every operation that
+       works from the selection inherits the limit without repeating it. */
+    void trimSelectionToZone()
+    {
+        if (! owner->link.getZoned())
+            return;
+
+        for (int n = 0; n < 128; ++n)
+            if (selected[n] && ! paintable (n))
+                selected[n] = false;
+    }
+
     void applyToSelection (uint32_t rgb)
     {
         pushUndo();
 
         for (int n = 0; n < 128; ++n)
             if (selected[n])
-                owner->link.setColour (n, rgb);
+                setColourIfOwned (n, rgb);
 
         markDirty();
     }
@@ -2445,7 +2824,7 @@ private:
     {
         for (int n = 0; n < 128; ++n)
             if (! selected[n])
-                owner->link.setColour (n, rgb);
+                setColourIfOwned (n, rgb);
 
         markDirty();
     }
@@ -2462,7 +2841,7 @@ private:
     void applyToAll (uint32_t rgb)
     {
         for (int n = 0; n < 128; ++n)
-            owner->link.setColour (n, rgb);
+            setColourIfOwned (n, rgb);
 
         markDirty();
     }
@@ -2474,7 +2853,7 @@ private:
             if (! selected[n])
                 continue;
 
-            const uint32_t rgb = owner->link.getColour (n);
+            const uint32_t rgb = owner->link.getKeyColour (n);
             pickerColour[0] = (float) ((rgb >> 16) & 0xff) / 255.0f;
             pickerColour[1] = (float) ((rgb >> 8) & 0xff) / 255.0f;
             pickerColour[2] = (float) (rgb & 0xff) / 255.0f;
@@ -2485,7 +2864,7 @@ private:
     void generateWheel (float saturation)
     {
         for (int n = 0; n < 128; ++n)
-            owner->link.setColour (n, hsvToRgb ((float) pitchClassOf (n) / 12.0f, saturation, 1.0f));
+            setColourIfOwned (n, hsvToRgb ((float) pitchClassOf (n) / 12.0f, saturation, 1.0f));
 
         markDirty();
     }
@@ -2495,7 +2874,7 @@ private:
         for (int n = 0; n < 128; ++n)
         {
             const int position = (pitchClassOf (n) * 7) % 12;
-            owner->link.setColour (n, hsvToRgb ((float) position / 12.0f, 0.85f, 1.0f));
+            setColourIfOwned (n, hsvToRgb ((float) position / 12.0f, 0.85f, 1.0f));
         }
 
         markDirty();
@@ -2504,7 +2883,7 @@ private:
     void generatePiano()
     {
         for (int n = 0; n < 128; ++n)
-            owner->link.setColour (n, kIsBlackKey[pitchClassOf (n)] ? 0x000000u : 0xf0f0ffu);
+            setColourIfOwned (n, kIsBlackKey[pitchClassOf (n)] ? 0x000000u : 0xf0f0ffu);
 
         markDirty();
     }
@@ -2531,11 +2910,11 @@ private:
             const int degree = ((pitchClassOf (n) - scaleRoot) + 12) % 12;
 
             if (((mask >> degree) & 1u) == 0u)
-                owner->link.setColour (n, outRgb);
+                setColourIfOwned (n, outRgb);
             else if (degree == 0)
-                owner->link.setColour (n, rootRgb);
+                setColourIfOwned (n, rootRgb);
             else
-                owner->link.setColour (n, inRgb);
+                setColourIfOwned (n, inRgb);
         }
 
         markDirty();
@@ -2586,6 +2965,10 @@ private:
     /* The anchor the captured colours are currently sitting at, or -1 when none have
        been applied. Only that span is cleared when the anchor moves. */
     int appliedAnchor = -1;
+
+    int zoneLow = 0;
+    int zoneHigh = 127;
+    ZoneInfo zoneBlocker = { 0, 0, 0 };
     bool captureLive = false;
     std::string presetMessage;
 
@@ -2593,8 +2976,119 @@ public:
     /* 0 none, 1 save, 2 load. Acted on after the frame, never during it. */
     int pendingDialog = 0;
 
+    /* 0 none, 1 find windows, 2 read the selected one. Same rule, same reason. */
+    int pendingCapture = 0;
+
+    /* Compared with the previous frame's; any difference means redraw. */
+    uint32_t lastSignature = 0;
+    bool lastHadMouse = true;
+    ImVec2 lastMouse = ImVec2 (0.0f, 0.0f);
+    int settleFrames = 0;
+    double lastColourFrame = 0.0;
+
+    bool needsFrame()
+    {
+        uint32_t signature = 0;
+
+        for (int n = 0; n < 128; ++n)
+            signature = signature * 31u + owner->link.getDisplayColour (n);
+
+        signature = signature * 31u + (uint32_t) (owner->link.hasDevice() ? 1 : 0);
+        signature = signature * 31u + (uint32_t) pendingDialog;
+        signature = signature * 31u + (uint32_t) pendingCapture;
+        signature = signature * 31u + (uint32_t) (owner->link.getZoned() ? 1 : 0);
+        signature = signature * 31u + (uint32_t) owner->link.getZoneLow();
+        signature = signature * 31u + (uint32_t) owner->link.getZoneHigh();
+
+        /*
+            Colours changing are rate-limited; input is not.
+
+            A whole frame is rebuilt and redrawn whenever anything changes - an
+            immediate-mode editor has no way to redraw only the keyboard - so while
+            notes are playing or a screensaver is running the colours change every tick
+            and the saving disappears entirely. Thirty frames a second is as much as
+            anyone can see of a keyboard mirror, and it halves that case.
+
+            The device itself is unaffected: it is fed from the worker at its own rate
+            and never waits for the editor. This only slows the picture of it.
+
+            Input is deliberately not throttled. A pointer that redraws at thirty frames
+            feels worse than one that redraws at sixty, and input frames are rare enough
+            that their cost does not matter.
+        */
+        const double now = ImGui::GetTime();
+        const bool changed = signature != lastSignature
+                          && (now - lastColourFrame) >= 0.033;
+
+        if (changed)
+            lastColourFrame = now;
+
+        lastSignature = changed ? signature : lastSignature;
+
+        /*
+            Input is the host's business, not this function's.
+
+            ImGui applies queued input during NewFrame, so an editor that skipped the
+            frame would never see the pointer move and could never decide to wake up.
+            The host polls or receives input either way and ORs its answer with this
+            one; what is left here is everything the host cannot see - the colours, and
+            anything mid-interaction that outlives a single input event.
+        */
+        const bool busy = ImGui::IsAnyItemActive()
+                       || ImGui::IsPopupOpen (nullptr, ImGuiPopupFlags_AnyPopupId
+                                                     | ImGuiPopupFlags_AnyPopupLevel)
+                       || settleFrames > 0;
+
+        if (changed)
+            settleFrames = 3;
+        else if (settleFrames > 0)
+            --settleFrames;
+
+        return changed || busy;
+    }
+
+    void runPendingCapture()
+    {
+        const int which = pendingCapture;
+        pendingCapture = 0;
+
+        if (which == 1)
+        {
+            owner->capture->refreshWindows();
+            captureIndex = 0;
+            return;
+        }
+
+        if (which != 2)
+            return;
+
+        /*
+            The title is remembered only when the grab worked.
+
+            It was indented as though it were inside this block and was not, so a failed
+            grab still recorded the title - and refindWindow would then spend every later
+            attempt chasing a window that had never been read successfully in the first
+            place.
+
+            The index is compared as a size_t as well. Against an unsigned size a
+            negative index converts to something enormous and passes the test, which is
+            the one case the check exists to stop.
+        */
+        if (owner->capture->grab ((size_t) captureIndex))
+        {
+            owner->capture->detect();
+
+            const std::vector<CaptureWindow> &found = owner->capture->windows();
+
+            if (captureIndex >= 0 && (size_t) captureIndex < found.size())
+                owner->capture->rememberTitle (found[captureIndex].title);
+        }
+    }
+
     void runPendingDialog()
     {
+        runPendingCapture();
+
         const int which = pendingDialog;
         pendingDialog = 0;
 
@@ -2722,6 +3216,33 @@ void renderEditor (void *userData)
     imguiHostSetAfterFrame is called once when the editor is created, and the host layer
     invokes this only when the frame is closed and its drawing state is back as it was.
 */
+/*
+    Whether this frame would differ from the last one.
+
+    Deliberately generous about saying yes. A wrong yes costs one frame nobody needed; a
+    wrong no leaves a stale picture on screen, which is the kind of bug that looks like a
+    hang. So anything that could possibly be moving counts: the pointer being over the
+    window at all, any mouse button down, a control being edited, a tooltip or popup
+    open, and every animation the plugin runs.
+
+    The colour table is folded into a single number and compared with last frame's. That
+    covers everything the keyboard shows - notes arriving, effects decaying, a zone's
+    colours changing underneath - without the editor needing to know which of them
+    happened.
+
+    What is left is the common case: an editor sitting open with nothing playing and the
+    mouse elsewhere, redrawing the same picture sixty times a second.
+*/
+bool editorShouldRender (void *userData)
+{
+    LumiPaint *self = (LumiPaint *) userData;
+
+    if (self == nullptr || self->editor == nullptr)
+        return true;
+
+    return ((LumiEditor *) self->editor)->needsFrame();
+}
+
 void editorAfterFrame (void *userData)
 {
     LumiPaint *self = (LumiPaint *) userData;
@@ -2763,6 +3284,7 @@ bool guiCreate (const clap_plugin_t *plugin, const char *api, bool isFloating)
     }
 
     imguiHostSetAfterFrame (editor->hostWindow(), editorAfterFrame);
+    imguiHostSetShouldRender (editor->hostWindow(), editorShouldRender);
     return true;
 }
 

@@ -114,8 +114,8 @@ function(lumipaint_macos_configure_target target)
         OUTPUT_NAME "LumiPaint"
         MACOSX_BUNDLE_BUNDLE_NAME "LumiPaint"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.lumipaint.clap"
-        MACOSX_BUNDLE_BUNDLE_VERSION "1.0.2"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.2"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1.1.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "1.1.0"
         MACOSX_BUNDLE_COPYRIGHT "Copyright (C) 2026 Simon Bourdareau"
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/clap-bundle.plist.in")
 
@@ -155,7 +155,7 @@ function(lumipaint_macos_add_vst3)
     target_add_vst3_wrapper(TARGET LumiPaint_VST3
         OUTPUT_NAME "LumiPaint"
         BUNDLE_IDENTIFIER "com.lumipaint.vst3"
-        BUNDLE_VERSION "1.0.2"
+        BUNDLE_VERSION "1.1.0"
         SUPPORTS_ALL_NOTE_EXPRESSIONS TRUE
         MACOS_EMBEDDED_CLAP_LOCATION "$<TARGET_BUNDLE_DIR:LumiPaint>")
     lumipaint_macos_codesign(LumiPaint_VST3)
@@ -166,7 +166,7 @@ function(lumipaint_macos_add_au)
     target_add_auv2_wrapper(TARGET LumiPaint_AU
         OUTPUT_NAME "LumiPaint"
         BUNDLE_IDENTIFIER "com.lumipaint.au"
-        BUNDLE_VERSION "1.0.2"
+        BUNDLE_VERSION "1.1.0"
         MANUFACTURER_NAME "LumiPaint"
         MANUFACTURER_CODE "Lmpt"
         SUBTYPE_CODE "Lmp1"

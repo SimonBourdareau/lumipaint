@@ -44,6 +44,11 @@ struct ImGuiHostWindow
     bool rendering;
     bool inAfterFrame;
     ImGuiHostAfterFrameFn afterFrame;
+    ImGuiHostShouldRenderFn shouldRender;
+
+    /* Set by any message that came from the user. The editor cannot see input until it
+       draws, so the window is what knows whether there is a reason to. */
+    bool inputChanged;
 };
 
 namespace {
@@ -77,6 +82,17 @@ void releaseInput (HWND hwnd)
 
 void renderFrame (ImGuiHostWindow *c)
 {
+    /*
+        Skipped only when nothing arrived from the user and the editor says nothing
+        changed. Messages set the flag as they come in, so unlike the polling platforms
+        there is no ordering trap here - but the two halves are still both needed.
+    */
+    const bool hadInput = c->inputChanged;
+    c->inputChanged = false;
+
+    if (! hadInput && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
+        return;
+
     if (c == nullptr || ! c->created || c->imgui == nullptr
         || c->hdc == nullptr || c->hglrc == nullptr || c->hwnd == nullptr)
         return;
@@ -252,7 +268,10 @@ void startTimer (ImGuiHostWindow *c)
     }
 
     KillTimer (c->hwnd, 1);
-    SetTimer (c->hwnd, 1, 8, timerProc);
+    /* Sixteen, not eight. A hundred and twenty-five frames a second is twice the work
+       of sixty for a picture nobody can tell apart, and this was the only platform
+       running at it - X11 and macOS were already on sixty. */
+    SetTimer (c->hwnd, 1, 16, timerProc);
 }
 
 LRESULT CALLBACK wndProc (HWND h, UINT m, WPARAM w, LPARAM l)
@@ -271,6 +290,15 @@ LRESULT CALLBACK wndProc (HWND h, UINT m, WPARAM w, LPARAM l)
         Everything else - shortcuts, transport keys, search - belongs to the host, so it
         is forwarded to the parent window rather than consumed.
     */
+
+    /* Anything from the user is a reason to draw a frame. The editor cannot see input
+       until it draws, so the window is what has to notice. */
+    if (c != nullptr
+         && ((m >= WM_MOUSEFIRST && m <= WM_MOUSELAST)
+              || (m >= WM_KEYFIRST && m <= WM_KEYLAST)
+              || m == WM_SETFOCUS || m == WM_KILLFOCUS || m == WM_SIZE))
+        c->inputChanged = true;
+
     const bool isKeyMessage = m == WM_KEYDOWN || m == WM_KEYUP || m == WM_CHAR
                            || m == WM_SYSKEYDOWN || m == WM_SYSKEYUP || m == WM_SYSCHAR
                            || m == WM_DEADCHAR || m == WM_UNICHAR;
@@ -467,6 +495,8 @@ ImGuiHostWindow *imguiHostCreate (uint32_t width, uint32_t height, bool floating
     c->rendering = false;
     c->inAfterFrame = false;
     c->afterFrame = nullptr;
+    c->shouldRender = nullptr;
+    c->inputChanged = true;
 
     WNDCLASSEXW wc;
     ZeroMemory (&wc, sizeof (wc));
@@ -735,4 +765,11 @@ void imguiHostSetAfterFrame (ImGuiHostWindow *c, ImGuiHostAfterFrameFn afterFram
         return;
 
     c->afterFrame = afterFrame;
+}
+void imguiHostSetShouldRender (ImGuiHostWindow *c, ImGuiHostShouldRenderFn shouldRender)
+{
+    if (c == nullptr)
+        return;
+
+    c->shouldRender = shouldRender;
 }

@@ -88,6 +88,20 @@ struct ImGuiHostWindow
     bool rendering = false;
     bool inAfterFrame = false;
     ImGuiHostAfterFrameFn afterFrame = nullptr;
+    ImGuiHostShouldRenderFn shouldRender = nullptr;
+
+    /*
+        Whether anything arrived from the user since the last frame.
+
+        The editor's own idle check cannot answer this: ImGui applies queued input
+        during NewFrame, so an editor that skips the frame never learns the pointer
+        moved and can never decide to wake up. The host polls the pointer either way,
+        so it is the one place that knows.
+    */
+    bool inputChanged = true;
+    int lastPointerX = -1;
+    int lastPointerY = -1;
+    unsigned int lastMask = 0;
     std::chrono::steady_clock::time_point lastFrame;
     std::atomic<bool> running { false };
 
@@ -168,6 +182,14 @@ void pumpInput (ImGuiHostWindow *c)
     if (XQueryPointer (c->display, c->window, &root, &child,
                        &rootX, &rootY, &winX, &winY, &mask))
     {
+        if (winX != c->lastPointerX || winY != c->lastPointerY || mask != c->lastMask)
+        {
+            c->inputChanged = true;
+            c->lastPointerX = winX;
+            c->lastPointerY = winY;
+            c->lastMask = mask;
+        }
+
         io.AddMousePosEvent ((float) winX, (float) winY);
         io.AddMouseButtonEvent (0, (mask & Button1Mask) != 0);
         io.AddMouseButtonEvent (1, (mask & Button3Mask) != 0);
@@ -306,6 +328,36 @@ void renderFrame (ImGuiHostWindow *c)
     io.DeltaTime = (float) delta;
 
     pumpInput (c);
+
+    /*
+        Asked after the input is read, which on this platform is the only order that
+        works.
+
+        The pointer is polled here rather than delivered as events, so skipping before
+        this meant the position was never refreshed - and an editor that decides whether
+        to draw by whether the mouse moved would then never see it move again. No frame,
+        no input, no frame. Reading first costs one XQueryPointer on an idle editor and
+        makes waking up possible.
+    */
+    /*
+        Skipped only when the user has done nothing and the editor says nothing changed.
+
+        Either alone is not enough: the host knows about input but not about colours,
+        and the editor knows about colours but cannot see input until it draws.
+    */
+    const bool hadInput = c->inputChanged;
+    c->inputChanged = false;
+
+    if (! hadInput && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
+    {
+        /* The GL context was made current above and has to be let go of here, exactly
+           as the failure path below does - leaving it current on this thread is what
+           makes the next caller's glXMakeCurrent fail with BadAccess. */
+        glXMakeCurrent (c->display, None, nullptr);
+        ImGui::SetCurrentContext (previous);
+        c->rendering = false;
+        return;
+    }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
@@ -704,4 +756,12 @@ void imguiHostSetAfterFrame (ImGuiHostWindow *c, ImGuiHostAfterFrameFn afterFram
 
     std::lock_guard<std::mutex> held (c->lock);
     c->afterFrame = afterFrame;
+}
+void imguiHostSetShouldRender (ImGuiHostWindow *c, ImGuiHostShouldRenderFn shouldRender)
+{
+    if (c == nullptr)
+        return;
+
+    std::lock_guard<std::mutex> held (c->lock);
+    c->shouldRender = shouldRender;
 }

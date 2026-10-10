@@ -28,6 +28,32 @@ namespace lumipaint {
    would be worse than a message. */
 const int kClipBytes = 8192;
 
+/* Sixteen instances dividing one chain is already more tracks than anyone will point at
+   one keyboard; the table is small enough that a generous ceiling costs nothing. */
+const int kMaxZones = 16;
+
+/* Effects in flight across the whole chain at once. Ripples expire in under a second,
+   so this only has to cover a busy chord, not a performance. */
+const int kEffectSlots = 64;
+
+struct ZoneInfo
+{
+    uint32_t owner;
+    int low;
+    int high;
+};
+
+/*
+    The owner id that means "the zoned instances, together".
+
+    A hive is one claimant, not several. Instances that have taken a zone do not compete
+    with each other for the keyboard - they compete as a group against any instance that
+    has not, and the group either holds the device or does not. That is what keeps the
+    half-configured case out of existence: there is no state where one zoned track is
+    lit and another is dark because they outbid each other.
+*/
+const uint32_t kHiveOwner = 0xffffffffu;
+
 /*
     Which instance owns the keyboard.
 
@@ -52,6 +78,23 @@ public:
     ~DeviceClaim();
 
     /* This instance is being used - take the device, unless someone is holding it. */
+    /*
+        Zoning mode, which changes who the claim is made for.
+
+        A zoned instance claims on behalf of the hive rather than for itself, so
+        activity on any zoned track keeps the whole group on the keyboard. An un-zoned
+        instance claims for itself as before, and taking the device that way stands the
+        hive down - its zones are untouched, it simply stops sending until it wins back.
+    */
+    void setZoned (bool zoned);
+
+    /* True when this instance should be the one opening the port. For a solo owner that
+       is itself; for a hive it is the lowest live zone owner, which every member works
+       out from the same table and so agrees on without anyone being told. */
+    bool isSender() const;
+
+    bool hiveOwnsDevice() const;
+
     void claim();
 
     /*
@@ -107,6 +150,35 @@ public:
     uint32_t clipboardSeq() const;
 
 
+    /*
+        Zones: which instance owns which notes.
+
+        claimZone takes the range or refuses it, and refuses only for overlap with a
+        live zone belonging to somebody else. The caller finds out which range it
+        collided with so the editor can point at it rather than saying no.
+    */
+    bool claimZone (int low, int high, ZoneInfo &blocker);
+    void releaseZone();
+    void renewZone();
+    bool zoneAt (int index, ZoneInfo &info) const;
+    bool myZone (ZoneInfo &info) const;
+
+    /* Each member's zone as it looks before effects; the sender assembles all of them
+       and draws the effects itself. */
+    /* A note arrived at this instance, and whether that has stopped happening while it
+       is still happening to everyone else. */
+    void noteSeen();
+    bool zoneStarved() const;
+
+    void publishZoneColour (int note, uint32_t rgb);
+    void clearZoneColours (int low, int high);
+    bool readZoneColours (uint32_t *dest) const;
+
+    /* Effects as events carrying their own parameters, so whoever draws them does not
+       need anybody's settings. */
+    void postEffect (uint64_t packed);
+    bool takeEffect (int slot, uint64_t &packed);
+
     void publishColour (int note, uint32_t rgb);
     bool adoptDeviceState (uint32_t *dest) const;
     void forgetDeviceState();
@@ -114,9 +186,12 @@ public:
 private:
     struct Shared;
 
+    bool zoneIsLive (int index) const;
+
     void *mapping;
     Shared *state;
     uint32_t myId;
+    bool inHive;
 };
 
 }

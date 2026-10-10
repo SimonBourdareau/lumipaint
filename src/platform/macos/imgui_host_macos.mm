@@ -98,6 +98,10 @@ struct ImGuiHostWindow
        panel behind the first. */
     bool inAfterFrame;
     ImGuiHostAfterFrameFn afterFrame;
+    ImGuiHostShouldRenderFn shouldRender = nullptr;
+    CGFloat lastMouseX = -1.0;
+    CGFloat lastMouseY = -1.0;
+    NSUInteger lastButtons = 0;
 };
 
 @interface LumiPaintView : NSOpenGLView
@@ -138,6 +142,27 @@ struct ImGuiHostWindow
         return;
 
     if (c->rendering || self.isHiddenOrHasHiddenAncestor)
+        return;
+
+    /*
+        Skipped only when the pointer has not moved, no button is down, and the editor
+        says nothing changed.
+
+        Asked here rather than from ImGui's own input state, which is only updated
+        inside NewFrame - an editor that skipped the frame would never learn the pointer
+        had moved and could never wake itself up again.
+    */
+    const NSPoint where = [NSEvent mouseLocation];
+    const NSUInteger buttons = [NSEvent pressedMouseButtons];
+
+    const bool moved = where.x != c->lastMouseX || where.y != c->lastMouseY
+                    || buttons != c->lastButtons;
+
+    c->lastMouseX = where.x;
+    c->lastMouseY = where.y;
+    c->lastButtons = buttons;
+
+    if (! moved && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
         return;
 
     /* Backing pixels, not points. On a Retina display the surface is twice the view's
@@ -572,4 +597,11 @@ void imguiHostSetAfterFrame (ImGuiHostWindow *c, ImGuiHostAfterFrameFn afterFram
         return;
 
     c->afterFrame = afterFrame;
+}
+void imguiHostSetShouldRender (ImGuiHostWindow *c, ImGuiHostShouldRenderFn shouldRender)
+{
+    if (c == nullptr)
+        return;
+
+    c->shouldRender = shouldRender;
 }

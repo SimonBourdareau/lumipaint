@@ -25,7 +25,10 @@
 
 CROSS=${CROSS:-}
 CXX=${CROSS}g++
-OPT=${OPT:--O2}
+# Matches what CMake's Release gives the other two platforms. Measured on the heaviest
+# screensaver pattern it is about fifteen percent off the composite; nothing dramatic,
+# but there is no reason for Windows to be the slow one.
+OPT=${OPT:--O3}
 EXTRA=${EXTRA:-}
 
 fail() { echo; echo "FAILED: $1"; exit 1; }
