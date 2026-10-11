@@ -7,7 +7,7 @@
 </p>
 
 LumiPaint replaces the keyboard's two-colour factory lighting program with a 128-note
-colour map controlled by a CLAP or VST3 plugin. Paint notes, generate scales and gradients,
+colour map controlled by a CLAP or VST3 or AU (for macOS) plugin. Paint notes, generate scales and gradients,
 animate the keyboard, or copy colours from another plugin's on-screen keyboard.
 
 ## At a glance
