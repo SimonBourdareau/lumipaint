@@ -101,6 +101,16 @@ struct DeviceClaim::Shared
     std::atomic<uint64_t> zoneNoteStamp[kMaxZones];
 
     /*
+        Whether each member currently has anything sounding.
+
+        Idleness is a property of the keyboard, not of one track. A member being played
+        reset only its own clock, so the instance that happened to be sending still
+        believed the chain was idle - and painted the screensaver straight over the
+        notes somebody was holding down in another zone.
+    */
+    std::atomic<uint32_t> zoneSounding[kMaxZones];
+
+    /*
         What each zone currently looks like, before anything moves.
 
         Members write only the notes inside their own range, so the table assembles
@@ -227,6 +237,7 @@ DeviceClaim::DeviceClaim()
             state->zoneLow[i].store (0, std::memory_order_relaxed);
             state->zoneHigh[i].store (0, std::memory_order_relaxed);
             state->zoneNoteStamp[i].store (0, std::memory_order_relaxed);
+            state->zoneSounding[i].store (0, std::memory_order_relaxed);
         }
 
         state->magic.store (kMagic, std::memory_order_release);
@@ -807,6 +818,36 @@ bool DeviceClaim::zoneStarved() const
     const bool mineStale = mine != 0 && now >= mine && now - mine > 12000;
 
     return othersRecent && mineStale;
+}
+
+/* This member's own answer, published for whoever is drawing. */
+void DeviceClaim::publishSounding (bool sounding)
+{
+    if (state == nullptr)
+        return;
+
+    for (int i = 0; i < kMaxZones; ++i)
+        if (state->zoneOwner[i].load (std::memory_order_acquire) == myId)
+            state->zoneSounding[i].store (sounding ? 1u : 0u, std::memory_order_release);
+}
+
+/* True when anybody in the chain has a note down, which is what idleness has to mean
+   once a keyboard is shared. */
+bool DeviceClaim::chainSounding() const
+{
+    if (state == nullptr)
+        return false;
+
+    for (int i = 0; i < kMaxZones; ++i)
+    {
+        if (! zoneIsLive (i))
+            continue;
+
+        if (state->zoneSounding[i].load (std::memory_order_acquire) != 0u)
+            return true;
+    }
+
+    return false;
 }
 
 void DeviceClaim::publishZoneColour (int note, uint32_t rgb)

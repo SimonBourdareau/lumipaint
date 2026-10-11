@@ -303,6 +303,7 @@ std::string PresetIO::toText (const LumiLink &link,
     out << "splash-colour " << hex (link.getSplashColour()) << '\n';
     out << "afterglow-colour " << hex (link.getAfterglowColour()) << '\n';
     out << "pulse-colour " << hex (link.getPulseColour()) << '\n';
+    out << "downbeat-colour " << hex (link.getDownbeatColour()) << '\n';
     out << "halo-colour " << hex (link.getHaloColour()) << '\n';
     out << "sustain-colour " << hex (link.getSustainColour()) << '\n';
     out << "tension-home " << hex (link.getTensionHome()) << '\n';
@@ -503,6 +504,7 @@ bool PresetIO::fromText (const std::string &text, LumiLink &link,
             else if (key == "splash-colour") link.setSplashColour (rgb);
             else if (key == "afterglow-colour") link.setAfterglowColour (rgb);
             else if (key == "pulse-colour") link.setPulseColour (rgb);
+            else if (key == "downbeat-colour") link.setDownbeatColour (rgb);
             else if (key == "halo-colour") link.setHaloColour (rgb);
             else if (key == "sustain-colour") link.setSustainColour (rgb);
             else if (key == "tension-home") link.setTensionHome (rgb);

@@ -158,7 +158,7 @@ const int kGradientStops = 8;
 /* No note is currently held on this key. */
 const int kNoOffset = 1000;
 
-const uint32_t kStateVersion = 28;
+const uint32_t kStateVersion = 29;
 
 enum ParamId
 {
@@ -214,7 +214,7 @@ public:
     void publishLitBits (uint64_t low, uint64_t high);
     /* A note seen on the listen port rather than through the host - an arpeggiator
        or anything else downstream, fed back on a virtual cable. */
-    void externalNote (int note, bool on);
+    void externalNote (int note, bool on, int channel = 0);
     void setExternalLit (int note, bool isLit);
     void clearExternalLit();
     void setBrightness (double normalised);
@@ -428,7 +428,9 @@ public:
                               int &speed, int &trail, int &kind);
     uint32_t resolveRippleTint (int note) const;
     void startChainRipple (int note, int level, uint32_t tint, int speed, int trail);
+    void overlayPulse (const bool *owned);
     void overlayRipples();
+    void overlayPulse();
 
     int splashOrigin() const;
 
@@ -569,7 +571,9 @@ public:
     bool readClipboard (std::string &text) const;
     uint32_t screensaverColour (int note, uint32_t under) const;
     bool anyNoteSounding() const;
+    bool ownNoteSounding() const;
     bool wavesRunning() const;
+    bool pulseActive() const;
 
     /*
         Bend path.
@@ -586,6 +590,7 @@ public:
     /* Per-note bend, as a CLAP host sends it. Falls back to the note's channel when the
        host bends by channel instead. */
     void tuningOnNote (int note, double semitones);
+    void pressureOnNote (int note, int value);
     int bendCentsForNote (int note) const;
     void bendOnChannel (int channel, int value);
     void tuningOnChannel (int channel, double semitones);
@@ -599,7 +604,17 @@ public:
     uint32_t getHaloColour() const;
 
     void triggerAfterglow (int note, int level);
-    void triggerBeat (int level);
+    /*
+        The first beat of the bar gets its own colour.
+
+        It was already louder than the others - full brightness against a little over
+        half - which reads while you are watching for it and not at all while you are
+        playing. A different colour is the thing the eye picks up without looking.
+    */
+    void triggerBeat (int level, bool downbeat = false);
+
+    void setDownbeatColour (uint32_t rgb);
+    uint32_t getDownbeatColour() const;
     void triggerRipple (int note, int level);
     void triggerSplash (int level);
 
@@ -677,6 +692,24 @@ private:
     */
     void advanceRipples (int elapsedMs);
     void advanceGlow (int elapsedMs);
+
+    /*
+        The diffusion field, for the screensaver that behaves like paint in water.
+
+        Every other pattern is a function of the phase counter and the note number, so a
+        key can be worked out from nothing. This one cannot: spreading and mixing are
+        what the field did last tick carried forward, so it has to be kept. Three
+        channels of a hundred and twenty-eight keys, advanced once a tick rather than
+        per note - a blur is about neighbours, and a per-note function has none.
+    */
+    void advanceDiffusion (int elapsedMs);
+
+    int diffuseR[128];
+    int diffuseG[128];
+    int diffuseB[128];
+    int diffuseClock;
+    int diffuseTick;
+    uint32_t diffuseSeed;
     void compositeColours();
     void shutdownDevice();
 
@@ -720,6 +753,10 @@ private:
     int rippleAge[kMaxRipples];
     uint32_t rippleTint[kMaxRipples];
     int rippleLevel[kMaxRipples];
+
+    /* A wave that must not leave the zone that threw it - a splash, which is a
+       statement about one track rather than about a note. */
+    int rippleLocal[kMaxRipples];
     int rippleStep[kMaxRipples];
     int rippleTrail16[kMaxRipples];
     int activeRipples;
@@ -746,6 +783,11 @@ private:
     int pulseLevel;
     std::atomic<int> pulseEnabled;
     std::atomic<uint32_t> pulseColour;
+    std::atomic<uint32_t> downbeatColour;
+
+    /* The colour of the pulse currently fading - whichever of the two threw it, so the
+       beat that started as a downbeat stays one all the way out. */
+    std::atomic<uint32_t> pulseActiveTint;
 
     /* Chord halo: with two or more notes held, the same pitch classes light in the
        other octaves. Changes only when the chord does. */
@@ -795,6 +837,10 @@ private:
        than only the last one to arrive. */
     std::atomic<int> noteChannel[128];
     std::atomic<int> noteBendCents[128];
+
+    /* How hard each sounding key is held, 0-127. Discarded until now - the firmware did
+       the pressure tint itself - and needed here so each instance can do its own. */
+    std::atomic<int> notePressure[128];
     std::atomic<int> channelBend[16];
     std::atomic<int> lastBendCents;
     std::atomic<int> lastBendNote;

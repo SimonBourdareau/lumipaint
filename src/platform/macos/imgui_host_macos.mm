@@ -99,6 +99,18 @@ struct ImGuiHostWindow
     bool inAfterFrame;
     ImGuiHostAfterFrameFn afterFrame;
     ImGuiHostShouldRenderFn shouldRender = nullptr;
+    /*
+        Set by any event the user generated, from a monitor of our own.
+
+        ImGui's Cocoa backend installs a monitor for keys and feeds them straight into
+        its own queue, which means they never pass through anything here - so an editor
+        deciding whether to draw by polling the mouse would see nothing when somebody
+        typed, and the character would sit in the queue with no frame to show it.
+        Watching the same events ourselves is the only way to notice.
+    */
+    bool inputChanged = true;
+    id eventMonitor = nil;
+
     CGFloat lastMouseX = -1.0;
     CGFloat lastMouseY = -1.0;
     NSUInteger lastButtons = 0;
@@ -152,18 +164,6 @@ struct ImGuiHostWindow
         inside NewFrame - an editor that skipped the frame would never learn the pointer
         had moved and could never wake itself up again.
     */
-    const NSPoint where = [NSEvent mouseLocation];
-    const NSUInteger buttons = [NSEvent pressedMouseButtons];
-
-    const bool moved = where.x != c->lastMouseX || where.y != c->lastMouseY
-                    || buttons != c->lastButtons;
-
-    c->lastMouseX = where.x;
-    c->lastMouseY = where.y;
-    c->lastButtons = buttons;
-
-    if (! moved && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
-        return;
 
     /* Backing pixels, not points. On a Retina display the surface is twice the view's
        point size, and a viewport in points draws into a quarter of it. */
@@ -178,6 +178,39 @@ struct ImGuiHostWindow
 
     ImGuiContext *previous = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext (c->imgui);
+
+    /*
+        Asked with this editor's context current, not before it.
+
+        Whether an item is being edited and what the time is are both per-context, and
+        asking before the switch answers them for whatever editor happened to be current
+        on this thread - another instance's, or none. A window with a text field open
+        could then be told nothing had changed, stop drawing, and swallow everything
+        typed into it.
+
+        The GL context is already current here, so the early exit gives it back the same
+        way the end of this method does.
+    */
+    const NSPoint where = [NSEvent mouseLocation];
+    const NSUInteger buttons = [NSEvent pressedMouseButtons];
+
+    const bool moved = where.x != c->lastMouseX || where.y != c->lastMouseY
+                    || buttons != c->lastButtons;
+
+    c->lastMouseX = where.x;
+    c->lastMouseY = where.y;
+    c->lastButtons = buttons;
+
+    const bool hadInput = c->inputChanged || moved;
+    c->inputChanged = false;
+
+    if (! hadInput && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
+    {
+        ImGui::SetCurrentContext (previous);
+        [NSOpenGLContext clearCurrentContext];
+        c->rendering = false;
+        return;
+    }
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplOSX_NewFrame (self);
@@ -397,6 +430,31 @@ ImGuiHostWindow *imguiHostCreate (uint32_t width, uint32_t height, bool floating
     applyStyle();
 
     ImGui_ImplOSX_Init (view);
+
+    /*
+        Watched, not consumed. The handler returns the event untouched, so the backend's
+        own monitor and the responder chain see it exactly as before - this only notes
+        that something happened, so the next tick knows there is a reason to draw.
+    */
+    c->eventMonitor =
+        [NSEvent addLocalMonitorForEventsMatchingMask: (NSEventMaskKeyDown
+                                                        | NSEventMaskKeyUp
+                                                        | NSEventMaskFlagsChanged
+                                                        | NSEventMaskLeftMouseDown
+                                                        | NSEventMaskLeftMouseUp
+                                                        | NSEventMaskRightMouseDown
+                                                        | NSEventMaskRightMouseUp
+                                                        | NSEventMaskOtherMouseDown
+                                                        | NSEventMaskOtherMouseUp
+                                                        | NSEventMaskMouseMoved
+                                                        | NSEventMaskLeftMouseDragged
+                                                        | NSEventMaskRightMouseDragged
+                                                        | NSEventMaskScrollWheel)
+                                              handler: ^NSEvent * (NSEvent *event)
+        {
+            c->inputChanged = true;
+            return event;
+        }];
     ImGui_ImplOpenGL3_Init ("#version 150");
     ImGui::SetCurrentContext (previous);
 
@@ -438,6 +496,12 @@ void imguiHostDestroy (ImGuiHostWindow *c)
         ImGui::SetCurrentContext (c->imgui);
         [[c->view openGLContext] makeCurrentContext];
         ImGui_ImplOpenGL3_Shutdown();
+        if (c->eventMonitor != nil)
+        {
+            [NSEvent removeMonitor: c->eventMonitor];
+            c->eventMonitor = nil;
+        }
+
         ImGui_ImplOSX_Shutdown();
         ImGui::DestroyContext (c->imgui);
         ImGui::SetCurrentContext (previous);

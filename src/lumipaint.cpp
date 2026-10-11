@@ -15,6 +15,7 @@
     this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
+#include <cmath>
 #include "lumipaint.h"
 #include "keybed_capture.h"
 #include "silent_audio.h"
@@ -146,13 +147,13 @@ void ColourInputDecoder::feed (LumiLink &link, uint8_t status, uint8_t data1, ui
 
     if (kind == 0x90 && data2 > 0)
     {
-        link.externalNote (data1, true);
+        link.externalNote (data1, true, status & 0x0f);
         return;
     }
 
     if (kind == 0x80 || (kind == 0x90 && data2 == 0))
     {
-        link.externalNote (data1, false);
+        link.externalNote (data1, false, status & 0x0f);
         return;
     }
 
@@ -173,10 +174,26 @@ void ColourInputDecoder::feed (LumiLink &link, uint8_t status, uint8_t data1, ui
         and anything else is a report. The slots above 99 cannot collide at all, since
         the plugin would have to be holding note 100 for the question to arise.
     */
+    if ((status & 0xf0) == kReportStatus)
+    {
+        /*
+            Pressure for a key this plugin knows is down, whatever its note number.
+
+            This used to sit inside the report-slot test below, so pressure was only
+            kept for the handful of notes that happen to be slot numbers and thrown away
+            for every other key - which is most of the keyboard. The test that separates
+            pressure from a report is whether the note is sounding, not whether its
+            number is in the slot range.
+        */
+        if (link.isNoteSounding (data1))
+        {
+            link.pressureOnNote (data1, data2);
+            return;
+        }
+    }
+
     if ((status & 0xf0) == kReportStatus && isReportSlot (data1))
     {
-        if (link.isNoteSounding (data1))
-            return;
 
         if (data1 == kSlotWidth)
             link.setClusterWidth (data2);
@@ -317,9 +334,21 @@ LumiLink::LumiLink()
     triggerWrite.store (0, std::memory_order_relaxed);
     triggerRead = 0;
 
+    for (int i = 0; i < 128; ++i)
+    {
+        diffuseR[i] = 0;
+        diffuseG[i] = 0;
+        diffuseB[i] = 0;
+    }
+
+    diffuseClock = 0;
+    diffuseTick = 0;
+    diffuseSeed = 0x9e3779b9u;
+
     for (int i = 0; i < kMaxRipples; ++i)
     {
         rippleNote[i] = 0;
+        rippleLocal[i] = 0;
         rippleAge[i] = -1;
         rippleTint[i] = 0x00ffd6;
         rippleLevel[i] = 255;
@@ -348,6 +377,11 @@ LumiLink::LumiLink()
     pulseLevel = 0;
     pulseEnabled.store (0, std::memory_order_relaxed);
     pulseColour.store (0x4060ff, std::memory_order_relaxed);
+
+    /* Warm against the blue of the other beats, so the downbeat reads as different in
+       kind rather than merely brighter. */
+    downbeatColour.store (0xffc400, std::memory_order_relaxed);
+    pulseActiveTint.store (0x4060ff, std::memory_order_relaxed);
     degreeEnabled.store (0, std::memory_order_relaxed);
     degreeAlpha.store (170, std::memory_order_relaxed);
     degreeScale.store (0xab5, std::memory_order_relaxed);
@@ -414,6 +448,7 @@ LumiLink::LumiLink()
     {
         noteChannel[i].store (-1, std::memory_order_relaxed);
         noteBendCents[i].store (0, std::memory_order_relaxed);
+        notePressure[i].store (0, std::memory_order_relaxed);
     }
 
     lastBendCents.store (0, std::memory_order_relaxed);
@@ -885,10 +920,83 @@ uint32_t LumiLink::resolveRippleTint (int note) const
     once here and called only by the sender; an un-zoned instance never needs it,
     because nothing has overwritten its own composite.
 */
+/*
+    The beat pulse over whatever is already on the keyboard.
+
+    The same arithmetic the composite uses, applied in place so it can run after every
+    zone is assembled. Only the root pitch class lights, which is what makes the beat
+    readable rather than a flash.
+*/
+void LumiLink::overlayPulse()
+{
+    if (! pulseActive() || pulseLevel <= 0)
+        return;
+
+    const int alpha = (pulseLevel / 24) * 24;
+
+    if (alpha <= 0)
+        return;
+
+    const uint32_t tint = pulseActiveTint.load (std::memory_order_relaxed);
+    const int root = ((degreeRoot.load (std::memory_order_relaxed) % 12) + 12) % 12;
+
+    for (int note = 0; note < 128; ++note)
+    {
+        if ((((note % 12) + 12) % 12) != root)
+            continue;
+
+        const uint32_t under = desiredColour[note].load (std::memory_order_relaxed);
+        desiredColour[note].store (mixColour (under, tint, alpha),
+                                   std::memory_order_relaxed);
+    }
+}
+
+/*
+    The beat, over the whole assembled chain.
+
+    A bar belongs to the music rather than to a range, so the pulse covers every key the
+    chain owns and not just the sending instance's slice. It cannot be done in the
+    composite for the same reason ripples cannot: each member's zone arrives finished,
+    and a pulse painted into one would stop at the boundary.
+
+    The composite skips it whenever a zone is held, so this is the only place it happens
+    for a shared keyboard - and an un-zoned instance never calls this, because there the
+    composite still does it as it always has.
+*/
+void LumiLink::overlayPulse (const bool *owned)
+{
+    const int alpha = (pulseLevel / 24) * 24;
+
+    if (alpha <= 0)
+        return;
+
+    const uint32_t tint = pulseColour.load (std::memory_order_relaxed);
+    const int root = ((degreeRoot.load (std::memory_order_relaxed) % 12) + 12) % 12;
+
+    for (int note = 0; note < 128; ++note)
+    {
+        if (! owned[note])
+            continue;
+
+        if ((((note % 12) + 12) % 12) != root)
+            continue;
+
+        desiredColour[note].store (
+            mixColour (desiredColour[note].load (std::memory_order_relaxed), tint, alpha),
+            std::memory_order_relaxed);
+    }
+}
+
 void LumiLink::overlayRipples()
 {
     if (activeRipples <= 0)
         return;
+
+    /* Where this instance's own range is, for the waves that are not allowed to leave
+       it. Meaningless when nothing is shared, and not consulted then either. */
+    const bool bounded = hasZone();
+    const int myLow = zoneLow.load (std::memory_order_relaxed);
+    const int myHigh = zoneHigh.load (std::memory_order_relaxed);
 
     for (int note = 0; note < 128; ++note)
     {
@@ -898,6 +1006,10 @@ void LumiLink::overlayRipples()
         for (int i = 0; i < kMaxRipples; ++i)
         {
             if (rippleAge[i] < 0)
+                continue;
+
+            /* A splash stays on the track that threw it. */
+            if (rippleLocal[i] != 0 && bounded && (note < myLow || note > myHigh))
                 continue;
 
             int distance = note - rippleNote[i];
@@ -958,6 +1070,7 @@ void LumiLink::startChainRipple (int note, int level, uint32_t tint, int speed, 
         return;
 
     rippleNote[slot] = note;
+    rippleLocal[slot] = 0;
     rippleTint[slot] = tint;
     rippleStep[slot] = speed < 1 ? 1 : speed;
     rippleTrail16[slot] = 16 * (trail < 1 ? 1 : trail);
@@ -1284,6 +1397,22 @@ uint32_t LumiLink::senderId() const
 
 int LumiLink::splashOrigin() const
 {
+    /*
+        Sharing a keyboard, a splash belongs to its own track.
+
+        Ripples cross zone boundaries because a wave thrown by a note is about the note;
+        a splash is about the instance - a CC on this track, saying something about this
+        part. Spreading it over somebody else's range would be one track's controller
+        washing over another's keys. So it starts in the middle of what this instance
+        owns and stays there.
+    */
+    if (hasZone())
+    {
+        const int low = zoneLow.load (std::memory_order_relaxed);
+        const int high = zoneHigh.load (std::memory_order_relaxed);
+        return (low + high) / 2;
+    }
+
     const int blocks = blockCount.load (std::memory_order_relaxed);
 
     int lowest = -1;
@@ -1540,7 +1669,7 @@ int LumiLink::getWavesDelay() const
 
 void LumiLink::setWavesMode (int mode)
 {
-    if (mode < 0 || mode > 5)
+    if (mode < 0 || mode > 6)
         mode = 0;
 
     wavesMode.store (mode, std::memory_order_relaxed);
@@ -1646,10 +1775,41 @@ uint32_t LumiLink::gradientAt (float position) const
 /* Any key lit at all, by a finger, the pedal, or the listen port. */
 bool LumiLink::anyNoteSounding() const
 {
+    if (ownNoteSounding())
+        return true;
+
+    /*
+        In a chain, anybody's note counts.
+
+        Idleness is a property of the keyboard. A member being played used to reset only
+        its own clock, so whoever was sending still thought nothing was happening and
+        laid the screensaver over the notes that member was holding. Asking the chain
+        means one hand anywhere keeps the whole keyboard awake.
+    */
+    return hasZone() && claim.chainSounding();
+}
+
+bool LumiLink::ownNoteSounding() const
+{
     return (litBits[0].load (std::memory_order_relaxed)
              | externalLitBits[0].load (std::memory_order_relaxed)) != 0ull
         || (litBits[1].load (std::memory_order_relaxed)
              | externalLitBits[1].load (std::memory_order_relaxed)) != 0ull;
+}
+
+/*
+    The beat belongs to whoever is sending, for the same reason the screensaver does.
+
+    A bar is a property of the music rather than of a range, so the pulse covers the
+    whole keyboard and there is exactly one instance in a position to draw it. Members
+    publish their maps without it.
+*/
+bool LumiLink::pulseActive() const
+{
+    if (pulseEnabled.load (std::memory_order_relaxed) == 0)
+        return false;
+
+    return ! (hasZone() && ! claim.isSender());
 }
 
 bool LumiLink::wavesRunning() const
@@ -1701,6 +1861,18 @@ uint32_t LumiLink::getBendPathColour() const
     Cleared when the note ends, so a key that is not sounding cannot carry a stale bend
     into the next thing played on it.
 */
+/* Cleared when the note ends, so a released key cannot keep a stale pressure tint. */
+void LumiLink::pressureOnNote (int note, int value)
+{
+    if (note < 0 || note > 127)
+        return;
+
+    if (value < 0) value = 0;
+    if (value > 127) value = 127;
+
+    notePressure[note].store (value, std::memory_order_relaxed);
+}
+
 void LumiLink::tuningOnNote (int note, double semitones)
 {
     if (note < 0 || note > 127)
@@ -1736,7 +1908,10 @@ void LumiLink::noteOnChannel (int channel, int note, bool on)
         return;
 
     if (! on)
+    {
         noteBendCents[note].store (0, std::memory_order_relaxed);
+        notePressure[note].store (0, std::memory_order_relaxed);
+    }
 
     channelNote[channel].store (on ? note : -1, std::memory_order_relaxed);
 
@@ -1816,10 +1991,33 @@ void LumiLink::triggerAfterglow (int note, int level)
                              std::memory_order_release);
 }
 
-void LumiLink::triggerBeat (int level)
+void LumiLink::setDownbeatColour (uint32_t rgb)
+{
+    downbeatColour.store (rgb & 0x00ffffffu, std::memory_order_relaxed);
+}
+
+uint32_t LumiLink::getDownbeatColour() const
+{
+    return downbeatColour.load (std::memory_order_relaxed);
+}
+
+void LumiLink::triggerBeat (int level, bool downbeat)
 {
     if (pulseEnabled.load (std::memory_order_relaxed) == 0)
         return;
+
+    /*
+        Which colour this beat is, decided now rather than while it fades.
+
+        The pulse outlives the moment it started by a few hundred milliseconds, and the
+        next beat arrives before the last has finished - so the tint has to be fixed at
+        the trigger and carried, or a downbeat would turn into an offbeat halfway
+        through its own decay.
+    */
+    const uint32_t tint = downbeat ? downbeatColour.load (std::memory_order_relaxed)
+                                   : pulseColour.load (std::memory_order_relaxed);
+
+    pulseActiveTint.store (tint, std::memory_order_relaxed);
 
     /*
         The beat is posted to the chain as well.
@@ -1832,12 +2030,182 @@ void LumiLink::triggerBeat (int level)
     */
     if (zoned.load (std::memory_order_relaxed) != 0)
     {
-        claim.postEffect (packEffect (0, level, pulseColour.load (std::memory_order_relaxed),
-                                      0, 0, kEffectPulse));
+        claim.postEffect (packEffect (0, level, tint, 0, 0, kEffectPulse));
         return;
     }
 
     pendingBeatLevel.store (level, std::memory_order_release);
+}
+
+/*
+    Paint dripping into water.
+
+    A drop lands now and then and is left to spread. Each tick every key becomes a
+    blend of itself and its two neighbours, so a spot of colour widens and softens, and
+    where two have reached the same keys their colours are already mixed - the blur does
+    that for free, which is the whole reason this is a field rather than a list of
+    drops.
+
+    Drops are rarer than rainfall's because they persist. Rainfall's fade to nothing in
+    half a second and the keyboard is empty again; these linger and overlap, so the same
+    rate would silt up into an even wash with nothing happening in it.
+
+    Decays slightly faster than it spreads, or the keyboard drifts to a single averaged
+    colour and stays there - diffusion with nothing taken away is just a slow route to
+    beige.
+*/
+void LumiLink::advanceDiffusion (int elapsedMs)
+{
+    diffuseClock += elapsedMs;
+
+    /* A fixed step, so the look does not change with the tick rate. */
+    while (diffuseClock >= 24)
+    {
+        diffuseClock -= 24;
+
+        ++diffuseTick;
+        diffuseSeed = diffuseSeed * 1664525u + 1013904223u;
+
+        /* Under three a second across the whole keyboard. Often enough that pools
+           overlap and mix, slow enough that each one is still a thing you watch
+           arrive rather than part of a texture. */
+        if ((diffuseSeed >> 16) % 16u == 0u)
+        {
+            const int where = (int) ((diffuseSeed >> 8) % 128u);
+            const uint32_t tint =
+                gradientAt ((float) ((diffuseSeed >> 20) % 1000u) / 999.0f);
+
+            /*
+                A drop covers what was there rather than adding to it.
+
+                Paint on a canvas does not fade off it; it stays until something else is
+                put on top. Adding meant the only way to stop the surface filling up was
+                to take colour away everywhere, which is why it kept going black - the
+                thing you noticed. Covering instead means the keyboard can stay painted
+                indefinitely and still change, because each drop replaces a patch of it.
+
+                The two keys either side take some of it too, so a drop lands as a
+                splash rather than a single lit key, and the spreading carries on from
+                there.
+            */
+            const int r = (int) ((tint >> 16) & 0xffu);
+            const int g = (int) ((tint >> 8) & 0xffu);
+            const int b = (int) (tint & 0xffu);
+
+            diffuseR[where] = r;
+            diffuseG[where] = g;
+            diffuseB[where] = b;
+
+            for (int side = -4; side <= 4; ++side)
+            {
+                if (side == 0)
+                    continue;
+
+                const int n = where + side;
+
+                if (n < 0 || n > 127)
+                    continue;
+
+                const int reach = side < 0 ? -side : side;
+                const int weight = 256 - reach * 50;
+
+                diffuseR[n] = (diffuseR[n] * (256 - weight) + r * weight) / 256;
+                diffuseG[n] = (diffuseG[n] * (256 - weight) + g * weight) / 256;
+                diffuseB[n] = (diffuseB[n] * (256 - weight) + b * weight) / 256;
+            }
+        }
+
+        /*
+            The water moves, and carries the paint with it.
+
+            Spreading alone only ever gives soft circles sitting where they landed. What
+            makes paint on a wet surface look alive is that it is dragged as well as
+            diffused - stretched thin where the flow pulls apart, piled up where it
+            meets itself, and smeared past its neighbours on the way.
+
+            The flow is two slow waves of different wavelength drifting in opposite
+            directions, so it never settles into a pattern you can read. It is a
+            fraction of a key per step, taken by interpolating between the key and its
+            upstream neighbour - a whole-key shift would stutter, and this is a drift,
+            not a scroll.
+        */
+        {
+            const float t = (float) diffuseTick * 0.004f;
+
+            int flowR[128], flowG[128], flowB[128];
+
+            for (int n = 0; n < 128; ++n)
+            {
+                const float v = std::sin ((float) n * 0.055f + t * 1.7f) * 0.17f
+                              + std::sin ((float) n * 0.021f - t * 1.1f) * 0.11f;
+
+                const int from = v > 0.0f ? (n > 0 ? n - 1 : 0)
+                                          : (n < 127 ? n + 1 : 127);
+
+                float amount = v < 0.0f ? -v : v;
+
+                if (amount > 0.9f)
+                    amount = 0.9f;
+
+                const int weight = (int) (amount * 256.0f);
+
+                flowR[n] = (diffuseR[n] * (256 - weight) + diffuseR[from] * weight) / 256;
+                flowG[n] = (diffuseG[n] * (256 - weight) + diffuseG[from] * weight) / 256;
+                flowB[n] = (diffuseB[n] * (256 - weight) + diffuseB[from] * weight) / 256;
+            }
+
+            for (int n = 0; n < 128; ++n)
+            {
+                diffuseR[n] = flowR[n];
+                diffuseG[n] = flowG[n];
+                diffuseB[n] = flowB[n];
+            }
+        }
+
+        int nextR[128], nextG[128], nextB[128];
+
+        for (int n = 0; n < 128; ++n)
+        {
+            const int low = n > 0 ? n - 1 : 0;
+            const int high = n < 127 ? n + 1 : 127;
+
+            /* The ends count themselves twice rather than wrapping: a drop near the
+               bottom of the keyboard should pool there, not reappear at the top. */
+            /*
+                A gentle blur, because this runs forty times a second.
+
+                A one-two-one average every step is a very strong blur indeed - a patch
+                of colour was averaged away within a second or two, and since most of
+                the keyboard starts black that meant averaging toward black. Taking a
+                fourteenth of each neighbour instead spreads a drop over several
+                seconds, which is what spreading in water actually looks like, and lets
+                paint survive long enough to be stirred.
+            */
+            nextR[n] = (diffuseR[low] + diffuseR[n] * 14 + diffuseR[high]) / 16;
+            nextG[n] = (diffuseG[low] + diffuseG[n] * 14 + diffuseG[high]) / 16;
+            nextB[n] = (diffuseB[low] + diffuseB[n] * 14 + diffuseB[high]) / 16;
+
+            /*
+                Nothing is taken away.
+
+                With drops covering rather than adding there is nothing to drain: the
+                canvas stays painted, the flow keeps moving it, and each new drop
+                replaces a patch. Taking colour away was what made the keyboard fall
+                dark between drops, which is not what paint does.
+
+                It does mean the surface never clears by itself - and it does not need
+                to. The screensaver only runs while the keyboard is idle, and the
+                moment a note arrives the painted map is back.
+            */
+        }
+
+        for (int n = 0; n < 128; ++n)
+        {
+            diffuseR[n] = nextR[n];
+            diffuseG[n] = nextG[n];
+            diffuseB[n] = nextB[n];
+        }
+    }
 }
 
 void LumiLink::advanceGlow (int elapsedMs)
@@ -1947,6 +2315,7 @@ void LumiLink::advanceRipples (int elapsedMs)
         }
 
         const bool isSplash = (packed & 0x40000000u) != 0u;
+        rippleLocal[slot] = isSplash ? 1 : 0;
 
         rippleNote[slot] = (int) ((packed >> 8) & 0x7f);
         rippleLevel[slot] = (int) (packed & 0xff);
@@ -2147,6 +2516,31 @@ uint32_t LumiLink::screensaverColour (int note, uint32_t result) const
     position = position < 0.5f ? position * 2.0f : (1.0f - position) * 2.0f;
 
     result = gradientAt (position);
+    }
+    else if (wavesWhich == 6)
+    {
+        /*
+            Diffusion: read straight out of the field, which has already done the
+            spreading and the mixing.
+
+            Quantised like rainfall's fade, because a blur nudges every key by a shade
+            or two every tick and the device does not need to hear about it - that would
+            make this the most expensive pattern here by a wide margin, for a difference
+            nobody can see.
+        */
+        int r = diffuseR[note];
+        int g = diffuseG[note];
+        int b = diffuseB[note];
+
+        if (r > 255) r = 255;
+        if (g > 255) g = 255;
+        if (b > 255) b = 255;
+
+        r = (r / 12) * 12;
+        g = (g / 12) * 12;
+        b = (b / 12) * 12;
+
+        result = ((uint32_t) r << 16) | ((uint32_t) g << 8) | (uint32_t) b;
     }
     else if (wavesWhich == 5)
     {
@@ -2461,6 +2855,13 @@ void LumiLink::compositeColours()
         global bend is left switched off.
     */
     const bool zoneFilterOn = hasZone();
+
+    const int highlightOn = highlightEnabled.load (std::memory_order_relaxed);
+    const int pressOn = pressEnabled.load (std::memory_order_relaxed);
+    const int pressureOn = pressureGradEnabled.load (std::memory_order_relaxed);
+    const uint32_t highlightTint = highlightColour.load (std::memory_order_relaxed);
+    const uint32_t pressTint = pressColour.load (std::memory_order_relaxed);
+    const uint32_t pressureTint = pressureGradColour.load (std::memory_order_relaxed);
     const int zoneShift = getZoneOffset();
     const int bendGradOn = bendGradEnabled.load (std::memory_order_relaxed);
     const uint32_t bendGradTint = bendGradColour.load (std::memory_order_relaxed);
@@ -2541,7 +2942,7 @@ void LumiLink::compositeColours()
     const uint32_t glowTint = afterglowColour.load (std::memory_order_relaxed);
     const int haloOn = haloEnabled.load (std::memory_order_relaxed);
     const uint32_t haloTint = haloColour.load (std::memory_order_relaxed);
-    const uint32_t pulseTint = pulseColour.load (std::memory_order_relaxed);
+    const uint32_t pulseTint = pulseActiveTint.load (std::memory_order_relaxed);
 
     /* Quantised so a slow decay does not rewrite every visible key on every tick; the
        diff then suppresses all the ticks that land on the same step. */
@@ -2721,8 +3122,52 @@ void LumiLink::compositeColours()
            arrived late and smeared into the next one. Pulsing the roots is four keys
            instead of forty-eight, it lands on time, and it reads better anyway: a
            metronome on the tonic rather than the whole board blinking. */
-        if (pulseAlpha > 0 && (((note % 12) + 12) % 12) == root)
+        /* Not here when the keyboard is shared: a pulse laid on during the composite
+           would stop at this instance's own range, and the assembly would then paint
+           the rest of the chain over it. It goes on afterwards instead, across
+           everything. */
+        if (pulseAlpha > 0 && ! zoneFilterOn && (((note % 12) + 12) % 12) == root)
             result = mixColour (result, pulseTint, pulseAlpha);
+
+        /*
+            Incoming, pressed and pressure, decided here rather than on the keyboard.
+
+            The firmware applied these from three controller values, which meant one
+            instance's swatches coloured every zone in a shared chain - the sending one,
+            since nobody else reaches the controller flush. They belong to whichever
+            instance received the note, like the bend tint already does, so they are
+            painted into the colour that goes out and the device's own versions are
+            switched off.
+
+            The layering is the firmware's, kept deliberately: the key's own colour,
+            replaced by the highlight when the host has lit it, replaced again by the
+            pressed colour when the key itself is down, then pressure mixed over that,
+            then bend over everything. Changing the order here would quietly change how
+            every existing map looks.
+        */
+        const uint64_t bit = 1ull << (note & 63);
+        const int word = note >> 6;
+
+        if (highlightOn != 0
+             && (litBits[word].load (std::memory_order_relaxed) & bit) != 0ull)
+            result = highlightTint;
+
+        const bool keyDown =
+            (externalLitBits[word].load (std::memory_order_relaxed) & bit) != 0ull;
+
+        if (pressOn != 0 && keyDown)
+            result = pressTint;
+
+        if (pressureOn != 0 && keyDown)
+        {
+            int alpha = notePressure[note].load (std::memory_order_relaxed) * 2;
+
+            if (alpha > 255)
+                alpha = 255;
+
+            if (alpha > 0)
+                result = mixColour (result, pressureTint, alpha);
+        }
 
         const uint32_t afterEffects = result;
 
@@ -2872,10 +3317,36 @@ void LumiLink::publishSustainBits (uint64_t low, uint64_t high)
     instance, which is the thing zones exist to stop - and the notes arriving here have
     not been through handleEvent, so nothing else has filtered them.
 */
-void LumiLink::externalNote (int note, bool on)
+void LumiLink::externalNote (int note, bool on, int channel)
 {
     if (! noteInZone (note))
         return;
+
+    /*
+        The channel is filled in only when the host has not already given one.
+
+        A note can reach an instance twice - through the host and through the listen
+        port - and the two do not have to agree about the channel: the host sends MPE
+        member channels, the keyboard may report something else entirely. Letting this
+        path overwrite meant the second arrival replaced the channel the bend was
+        actually on, and the tint vanished for every note the host had told us about.
+        Which is why filling it in here fixed the instance reading the keyboard directly
+        and broke the ones being fed by the host.
+
+        So it supplies a channel for notes that have none and never argues with one that
+        is already there. The release is left to whoever claimed it, for the same
+        reason: a host-known note is cleaned up by the host's own note-off.
+    */
+    if (on)
+    {
+        if (noteChannel[note].load (std::memory_order_relaxed) < 0)
+            noteOnChannel (channel, note, true);
+    }
+    else if ((litBits[note >> 6].load (std::memory_order_relaxed)
+               & (1ull << (note & 63))) == 0ull)
+    {
+        noteOnChannel (channel, note, false);
+    }
 
     /*
         Lit, and nothing else.
@@ -3521,6 +3992,30 @@ void LumiLink::run()
             So the colours are composited and published here, with no device involved,
             and the rest of the loop is left to whoever is actually sending.
         */
+        /*
+            Sharing but holding no range means sending nothing.
+
+            A refused claim leaves an instance in exactly that state - sharing switched
+            on, no keys owned - and it happens on every project load where somebody else
+            already has the range. Both branches below are gated on actually holding
+            one, so such an instance fell past them and sent its own full keyboard,
+            stamping its map over the whole chain. One instance in that state is enough
+            to make sharing look completely broken.
+
+            It owns no keys, so it has nothing to say about any of them.
+        */
+        if (zoned.load (std::memory_order_relaxed) != 0 && ! hasZone())
+        {
+            if (backend->out && backend->out->isPortOpen())
+            {
+                backend->out->closePort();
+                invalidateCache();
+            }
+
+            std::this_thread::sleep_for (std::chrono::milliseconds (4));
+            continue;
+        }
+
         if (hasZone() && ! claim.isSender())
         {
             if (backend->out && backend->out->isPortOpen())
@@ -3530,8 +4025,10 @@ void LumiLink::run()
             }
 
             claim.renewZone();
+            claim.publishSounding (ownNoteSounding());
             wavePhase += elapsedMs;
             advanceGlow (elapsedMs);
+            advanceDiffusion (elapsedMs);
             advanceRipples (elapsedMs);
             compositeColours();
 
@@ -3633,6 +4130,7 @@ void LumiLink::run()
         wavePhase += elapsedMs;
 
         advanceGlow (elapsedMs);
+        advanceDiffusion (elapsedMs);
         advanceRipples (elapsedMs);
         compositeColours();
 
@@ -3649,6 +4147,7 @@ void LumiLink::run()
         if (hasZone())
         {
             claim.renewZone();
+            claim.publishSounding (ownNoteSounding());
 
             /*
                 The sender takes every wave the chain has posted, whoever threw it.
@@ -3673,7 +4172,7 @@ void LumiLink::run()
 
                     if (kind == kEffectPulse)
                     {
-                        pulseColour.store (tint, std::memory_order_relaxed);
+                        pulseActiveTint.store (tint, std::memory_order_relaxed);
                         pendingBeatLevel.store (level, std::memory_order_release);
                     }
                     else
@@ -3775,6 +4274,18 @@ void LumiLink::run()
                                 desiredColour[note].load (std::memory_order_relaxed)),
                             std::memory_order_relaxed);
 
+            /*
+                The beat, over the whole chain.
+
+                Same reason the waves go on here: each member's zone arrives finished,
+                so anything laid on before the assembly stops at a boundary. A bar is
+                not a property of one track's range.
+            */
+            overlayPulse();
+
+            /* Before the waves, matching the order the composite uses for an un-zoned
+               instance: the beat sits under a ripple rather than over it. */
+            overlayPulse (owned);
             overlayRipples();
         }
 
@@ -4218,7 +4729,11 @@ void LumiLink::flushGlobals()
 
     if (wantHighlight != sentHighlightEnabled)
     {
-        sendCC (kCcHighlightOn, (uint8_t) (wantHighlight != 0 ? 1 : 0));
+        /* Always off on the device. The highlight is painted into the colour sent
+           for that key, so letting the firmware apply its own on top would put one
+           instance's swatch over every zone in a chain. The setting still means
+           "highlight incoming notes" - it just means it here. */
+        sendCC (kCcHighlightOn, 0);
         sentHighlightEnabled = wantHighlight;
     }
 
@@ -4236,7 +4751,7 @@ void LumiLink::flushGlobals()
 
     if (wantPress != sentPressEnabled)
     {
-        sendCC (kCcPressOn, (uint8_t) (wantPress != 0 ? 1 : 0));
+        sendCC (kCcPressOn, 0);
         sentPressEnabled = wantPress;
     }
 
@@ -4262,7 +4777,7 @@ void LumiLink::flushGlobals()
 
     if (wantPgOn != sentPressureGradEnabled)
     {
-        sendCC (kCcPressureGradOn, (uint8_t) (wantPgOn != 0 ? 1 : 0));
+        sendCC (kCcPressureGradOn, 0);
         sentPressureGradEnabled = wantPgOn;
     }
 
@@ -4999,6 +5514,11 @@ void handleEvent (LumiPaint *self, const clap_event_header_t *header)
             note bending moved them all. It looked right in non-MPE only because there
             is never more than one bend at a time there.
         */
+        /* A CLAP host sends pressure the same way it sends bend - by note, not by
+           channel - so it is taken by key here too. */
+        if (ev->expression_id == CLAP_NOTE_EXPRESSION_PRESSURE && ev->key >= 0)
+            self->link.pressureOnNote (ev->key, (int) (ev->value * 127.0));
+
         if (ev->expression_id == CLAP_NOTE_EXPRESSION_TUNING)
         {
             if (ev->key >= 0 && ev->key < 128)
@@ -5341,7 +5861,16 @@ clap_process_status pluginProcess (const clap_plugin_t *plugin, const clap_proce
         {
             const int64_t barBeat = t->bar_start / CLAP_BEATTIME_FACTOR;
             self->lastBeat = beat;
-            self->link.triggerBeat (beat == barBeat ? 255 : 150);
+            /*
+                Both beats louder than they were.
+
+                The offbeat sat at 150, which the quantiser rounded to 144 - a tint that
+                had to compete with whatever colour the key already carried and usually
+                lost. Raising it keeps the downbeat clearly ahead while making the other
+                beats actually readable on a painted keyboard.
+            */
+            const bool downbeat = beat == barBeat;
+            self->link.triggerBeat (downbeat ? 255 : 215, downbeat);
         }
     }
     else
@@ -5723,7 +6252,7 @@ bool stateSave (const clap_plugin_t *plugin, const clap_ostream_t *stream)
     if (stream->write (stream, &span, sizeof (span)) != (int64_t) sizeof (span))
         return false;
 
-    const uint32_t gradients[48] = { self->link.getPressureGradColour(),
+    const uint32_t gradients[49] = { self->link.getPressureGradColour(),
                                     self->link.getBendGradColour(),
                                     (uint32_t) self->link.getBendFullScale(),
                                     (uint32_t) ((self->link.getEnablePitchBend() ? 1 : 0)
@@ -5803,7 +6332,10 @@ bool stateSave (const clap_plugin_t *plugin, const clap_ostream_t *stream)
                                     (uint32_t) ((self->link.getZoned() ? 0x4000 : 0)
                                                 | ((self->link.getZoneLow() & 0x7f) << 7)
                                                 | (self->link.getZoneHigh() & 0x7f)
-                                                | (((self->link.getZoneOffset() + 128) & 0xff) << 15)) };
+                                                | (((self->link.getZoneOffset() + 128) & 0xff) << 15)),
+
+                                    /* The downbeat colour, added at version 29. */
+                                    self->link.getDownbeatColour() };
 
     if (stream->write (stream, gradients, sizeof (gradients)) != (int64_t) sizeof (gradients))
         return false;
@@ -5917,7 +6449,7 @@ bool stateLoad (const clap_plugin_t *plugin, const clap_istream_t *stream)
     }
     else if (header[1] >= 25)
     {
-        uint32_t extras[48] = { 0xffffff, 0x00c4ff, 2, 3, 0x00ffd6, 4, 2, 0xff7a1f, 1, 6, 3,
+        uint32_t extras[49] = { 0xffffff, 0x00c4ff, 2, 3, 0x00ffd6, 4, 2, 0xff7a1f, 1, 6, 3,
                                 0xffd000, 8, 0x4060ff, 0, 0x30406a, 0,
                                 170, 0xab5,
                                 0xff3b30, 0x8a6a2a, 0xffd60a, 0x2a6a5a,
@@ -5936,7 +6468,8 @@ bool stateLoad (const clap_plugin_t *plugin, const clap_istream_t *stream)
             that treats a failed state load as a failed plugin is indistinguishable
             from a crash.
         */
-        const size_t words = header[1] >= 28 ? 48u : (header[1] >= 27 ? 47u : 38u);
+        const size_t words = header[1] >= 29 ? 49u
+                           : (header[1] >= 28 ? 48u : (header[1] >= 27 ? 47u : 38u));
         const size_t bytes = words * sizeof (uint32_t);
 
         if (stream->read (stream, extras, bytes) != (int64_t) bytes)
@@ -6015,6 +6548,9 @@ bool stateLoad (const clap_plugin_t *plugin, const clap_istream_t *stream)
             the same machine - the claim fails and this instance comes back un-zoned
             rather than silently lighting keys somebody else owns.
         */
+        if (header[1] >= 29)
+            self->link.setDownbeatColour (extras[48]);
+
         if (header[1] >= 28)
         {
             const uint32_t packed = extras[47];

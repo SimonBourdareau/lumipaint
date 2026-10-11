@@ -170,6 +170,11 @@ public:
     void noteSeen();
     bool zoneStarved() const;
 
+    /* Whether this member has anything sounding, and whether anybody in the chain
+       does. Idleness belongs to the keyboard, not to one track. */
+    void publishSounding (bool sounding);
+    bool chainSounding() const;
+
     void publishZoneColour (int note, uint32_t rgb);
     void clearZoneColours (int low, int high);
     bool readZoneColours (uint32_t *dest) const;

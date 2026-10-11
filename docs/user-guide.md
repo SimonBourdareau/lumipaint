@@ -82,7 +82,7 @@ Tension effects.
 | Tension | Colours notes by distance around the circle of fifths from the root. |
 | Ripple | Sends a wave along the keyboard when a note is struck. |
 | Afterglow | Leaves a fading colour after a note is struck. |
-| Beat pulse | Flashes to the host transport, with a stronger downbeat. |
+| Beat pulse | Flashes the root on every beat, following the host transport. The first beat of the bar has its own colour - the second swatch - so the downbeat reads while you are playing rather than only while you are watching for it. |
 | Chord halo | Lights matching pitch classes in other octaves while multiple notes are held. |
 | Splash | Uses a selected MIDI CC to trigger a wave. |
 | Sustain | Shows notes held by the sustain pedal. Off by default. |
@@ -100,6 +100,25 @@ The screensaver starts after the configured idle delay and stops as soon as acti
 detected. Held notes, sustain-held notes and notes observed through the listen port count as
 activity.
 
+`Splash` behaves the other way round from ripples when the keyboard is shared: it starts
+from the middle of the instance's own zone and stays inside it. A ripple is about a note, so
+it crosses; a splash is a controller on one track saying something about that part, and
+spreading it over another track's keys would be one instance washing over another's. With
+no zone it is unchanged - the middle of the instrument, spreading across all of it.
+
+`Beat pulse` is also the sending instance's alone. A bar belongs to the music rather than to
+a range, so when it fires it covers every key the chain owns, not just the sender's slice -
+and on a member the row is greyed out and reads *the sending instance pulses the chain*.
+
+On a member of a shared chain the whole Screensaver section is greyed out and reads
+*not active as a member instance*. The instance that is sending draws the idle pattern for
+the whole chain, so a member's own setting would change nothing.
+
+In a shared chain, idleness belongs to the keyboard rather than to one track: a note held in
+any zone keeps the whole chain awake. Without that, a member being played would reset only
+its own clock and whichever instance was sending would lay the pattern over notes somebody
+was still holding.
+
 | Pattern | Purpose |
 |---|---|
 | Waves | Slow, overlapping brightness swells. |
@@ -108,6 +127,7 @@ activity.
 | Ember | Like Breathing, but each note has a different phase. |
 | Gradient drift | Scrolls the configured gradient across the keys. |
 | Rainfall | Coloured drops spread and fade across the keyboard. |
+| Diffusion | Paint dropped onto a wet canvas. A drop covers the keys it lands on rather than adding to them, so the colour stays until something else is dropped over it, and a slow flow drags the whole surface past itself - stretching colour thin where it pulls apart, piling it up where it meets. Nothing drains away; the surface only changes because new paint lands and the flow keeps moving it. Takes its colours from the gradient. |
 
 Waves, Aurora, Gradient drift and Rainfall temporarily replace the colour table until a note
 is played. Breathing and Ember preserve the map and animate its brightness.
@@ -155,6 +175,16 @@ currently displayed map, so switching tracks updates only notes whose colours di
 
 Use **Hold** to pin the device to one instance. Hold and Share cannot be enabled together.
 
+## Keyboard focus
+
+The editor takes the keyboard only while a text field is being edited - a colour's hex
+value, a note number - and gives it straight back afterwards, so the DAW keeps its own
+shortcuts the rest of the time.
+
+Without that, keystrokes go to whichever window the host last focused. With a single editor
+open that is always the right one, which is why typing worked with one instance and not with
+two.
+
 ## Sharing a chained keyboard across tracks
 
 Enable **Share** in each instance to assign it a note zone. Each zone owns a non-overlapping
@@ -168,6 +198,9 @@ range; notes outside the zone are not passed to the next instrument on that trac
   for every zone.
 - Zone ranges persist through silence and editor closure, and are released when the
   instance exits or after two minutes with no running instances.
+- Each instance resolves its own `Incoming`, `Pressed`, `Pressure` and `Bend` colours, so
+  every zone keeps its own; they are part of the colours it publishes - the highlight on a held key, the bend tint and the bend
+  path are all computed where the notes arrived.
 - The lowest live zone owner sends the assembled keyboard display. Ripples can cross zone
   boundaries; most other effects remain within their owning zone.
 - Beat pulse is chain-wide.

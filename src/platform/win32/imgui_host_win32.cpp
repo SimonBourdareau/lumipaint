@@ -49,6 +49,9 @@ struct ImGuiHostWindow
     /* Set by any message that came from the user. The editor cannot see input until it
        draws, so the window is what knows whether there is a reason to. */
     bool inputChanged;
+
+    /* True only while this window holds focus because it asked for it. */
+    bool tookFocus;
 };
 
 namespace {
@@ -82,17 +85,6 @@ void releaseInput (HWND hwnd)
 
 void renderFrame (ImGuiHostWindow *c)
 {
-    /*
-        Skipped only when nothing arrived from the user and the editor says nothing
-        changed. Messages set the flag as they come in, so unlike the polling platforms
-        there is no ordering trap here - but the two halves are still both needed.
-    */
-    const bool hadInput = c->inputChanged;
-    c->inputChanged = false;
-
-    if (! hadInput && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
-        return;
-
     if (c == nullptr || ! c->created || c->imgui == nullptr
         || c->hdc == nullptr || c->hglrc == nullptr || c->hwnd == nullptr)
         return;
@@ -133,6 +125,28 @@ void renderFrame (ImGuiHostWindow *c)
     }
 
     ImGui::SetCurrentContext (c->imgui);
+
+    /*
+        Asked here, with this editor's context current, and not a line earlier.
+
+        The question was being put at the top of this function, before the context was
+        set - so it was answered against whatever context happened to be current on this
+        thread, which is another plugin instance's or none at all. Whether an item is
+        being edited and what the time is both came from the wrong editor, so a window
+        with a text field open could be told nothing had changed and stop drawing, and
+        typing into it went nowhere.
+
+        This sits above the GL context being made current, so there is nothing to give
+        back but the rendering guard - which the failure paths below drop the same way.
+    */
+    const bool hadInput = c->inputChanged;
+    c->inputChanged = false;
+
+    if (! hadInput && c->shouldRender != nullptr && ! c->shouldRender (c->userData))
+    {
+        c->rendering = false;
+        return;
+    }
 
     {
         ImGuiIO &io = ImGui::GetIO();
@@ -195,6 +209,45 @@ void renderFrame (ImGuiHostWindow *c)
     SwapBuffers (c->hdc);
 
     wglMakeCurrent (prevDc, prevRc);
+
+    /*
+        Take the keyboard while a text field is being edited, and only then.
+
+        Nothing ever called SetFocus, so keys went to whichever window the host had
+        focused. With one editor open that was always the right one. With two, clicking
+        a field in this editor did not move focus to it - so the keystrokes arrived at
+        the other instance, whose WantTextInput is false, and were forwarded to the DAW.
+        Typing into a colour field did nothing, and only ever with more than one
+        instance open, which is exactly how it was reported.
+
+        Bounded by the field being active: the moment ImGui stops wanting text the
+        keyboard goes straight back, so the host keeps its shortcuts the rest of the
+        time. releaseInput already existed for this and had nothing to undo.
+    */
+    if (ImGui::GetIO().WantTextInput)
+    {
+        if (GetFocus() != c->hwnd)
+        {
+            SetFocus (c->hwnd);
+            c->tookFocus = true;
+        }
+    }
+    else if (c->tookFocus)
+    {
+        /*
+            Only focus this window took is given back.
+
+            The release used to fire whenever no text field was active, which is almost
+            always - so a window the host had focused of its own accord had the keyboard
+            taken off it on the very next frame, over and over. Typing stopped working
+            everywhere rather than just in the two-instance case it was meant to fix.
+        */
+        if (GetFocus() == c->hwnd)
+            releaseInput (c->hwnd);
+
+        c->tookFocus = false;
+    }
+
     c->rendering = false;
 
     /*
@@ -497,6 +550,7 @@ ImGuiHostWindow *imguiHostCreate (uint32_t width, uint32_t height, bool floating
     c->afterFrame = nullptr;
     c->shouldRender = nullptr;
     c->inputChanged = true;
+    c->tookFocus = false;
 
     WNDCLASSEXW wc;
     ZeroMemory (&wc, sizeof (wc));

@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="art/lumipaint_wordmark.svg" alt="LumiPaint" width="440">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="art/lumipaint_wordmark.svg">
+    <img src="art/lumipaint_wordmark_light.svg" alt="LumiPaint" width="440">
+  </picture>
 </p>
 
 <p align="center">
@@ -7,7 +10,7 @@
 </p>
 
 LumiPaint replaces the keyboard's two-colour factory lighting program with a 128-note
-colour map controlled by a CLAP or VST3 or AU (for macOS) plugin. Paint notes, generate scales and gradients,
+colour map controlled by a CLAP or VST3 plugin. Paint notes, generate scales and gradients,
 animate the keyboard, or copy colours from another plugin's on-screen keyboard.
 
 ## At a glance
@@ -32,7 +35,9 @@ Download the latest package from the [Releases page](../../releases/latest).
 
 1. Unzip the entire package into a folder.
 2. Run `install-windows.bat`.
-3. In ROLI Dashboard, drag `lumi_paint.littlefoot` onto your keyboard.
+3. In ROLI Dashboard, drag `lumi_paint.littlefoot` onto your keyboard. It appears there as
+   *LumiPaint - per-note colour for LUMI Keys*; on its own it shows nothing, because the
+   colours come from the plugin.
 4. Rescan plugins in your DAW and load LumiPaint on a MIDI track.
 
 To remove the plugins, run `uninstall-windows.bat`.

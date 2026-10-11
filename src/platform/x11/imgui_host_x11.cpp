@@ -99,6 +99,9 @@ struct ImGuiHostWindow
         so it is the one place that knows.
     */
     bool inputChanged = true;
+
+    /* True only while this window holds focus because it asked for it. */
+    bool tookFocus = false;
     int lastPointerX = -1;
     int lastPointerY = -1;
     unsigned int lastMask = 0;
@@ -205,6 +208,17 @@ void pumpInput (ImGuiHostWindow *c)
     while (XPending (c->display) > 0)
     {
         XNextEvent (c->display, &event);
+
+        /*
+            Every event is a reason to draw a frame.
+
+            Only pointer movement used to set this, so typing queued a character into
+            ImGui and then no frame was drawn to show it - the editor had gone to sleep
+            and nothing woke it. Keys, buttons, wheel, focus and resize all arrive
+            through here, so marking them at the top covers the lot and cannot be
+            forgotten again when another case is added.
+        */
+        c->inputChanged = true;
 
         switch (event.type)
         {
@@ -371,6 +385,40 @@ void renderFrame (ImGuiHostWindow *c)
     glClear (GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData (ImGui::GetDrawData());
     glXSwapBuffers (c->display, c->window);
+
+    /*
+        Take the keyboard while a text field is being edited, and only then.
+
+        Same reasoning as the Windows host: with one editor open the keys arrive here
+        anyway, and with two the one holding focus is whichever the host last gave it
+        to - so typing into a field in the other editor goes to the wrong place or to
+        the DAW. Asking for focus only while ImGui wants text keeps the host's
+        shortcuts working the rest of the time.
+    */
+    {
+        Window focused = None;
+        int revert = 0;
+        XGetInputFocus (c->display, &focused, &revert);
+
+        if (ImGui::GetIO().WantTextInput)
+        {
+            if (focused != c->window)
+            {
+                XSetInputFocus (c->display, c->window, RevertToParent, CurrentTime);
+                c->tookFocus = true;
+            }
+        }
+        else if (c->tookFocus)
+        {
+            /* Only focus this window asked for is handed back. Releasing whenever no
+               field was active would take the keyboard off a window the host had
+               focused itself, every frame. */
+            if (focused == c->window)
+                XSetInputFocus (c->display, PointerRoot, RevertToPointerRoot, CurrentTime);
+
+            c->tookFocus = false;
+        }
+    }
 
     glXMakeCurrent (c->display, None, nullptr);
     ImGui::SetCurrentContext (previous);

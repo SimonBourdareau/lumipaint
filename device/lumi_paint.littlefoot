@@ -1,5 +1,5 @@
 /*
-<metadata description="LumiPaint per-note colour" target="Lumi">
+<metadata description="LumiPaint - per-note colour for LUMI Keys. Drive it from the LumiPaint plugin (CLAP or VST3) in your DAW; on its own this program shows nothing. github.com/SimonBourdareau/lumipaint" target="Lumi">
 </metadata>
 */
 
@@ -21,7 +21,11 @@
 */
 
 // The target string is "Lumi", not "LUMI Keys", and the tags and insertModes
-// attributes are gone.
+// attributes are gone. The description is the one thing Dashboard puts in front of
+// anyone browsing their programs, so it says what this is and what it needs - a
+// keyboard sitting on an unfamiliar program with no explanation is a support question
+// waiting to happen. Adding any further attribute is what emptied the panel before, so
+// the text grows and the attribute list does not.
 //
 // This is what was emptying the settings panel, and it is not code at all. Probes with
 // the identical activation list showed a full panel while this program showed none, and

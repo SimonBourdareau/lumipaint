@@ -637,7 +637,6 @@ private:
 
         ImGui::SameLine (0.0f, 20.0f);
 
-
         ImGui::SameLine (0.0f, 20.0f);
         bool hold = owner->link.getHoldDevice();
 
@@ -1525,7 +1524,6 @@ private:
                 requestZone (bestLow, bestHigh);
     }
 
-
     /*
         Ask for a range, and remember what refused it.
 
@@ -1554,7 +1552,6 @@ private:
 
         markDirty();
     }
-
 
     uint32_t currentPickerRgb() const
     {
@@ -1836,7 +1833,6 @@ private:
             owner->link.setScaleRoot (scaleRoot);
 
         drawDegreeControls();
-
 
     }
 
@@ -2163,6 +2159,19 @@ private:
     */
     void drawScreensaverControls()
     {
+        /*
+            Greyed out on a member of a chain, because it does nothing there.
+
+            One keyboard going idle is one picture, so the instance that is sending
+            draws it for the whole chain and the others leave it alone. Leaving the
+            controls live on a member means a checkbox that changes nothing and a
+            pattern chosen that never appears - the kind of thing someone spends ten
+            minutes on before suspecting the plugin.
+        */
+        const bool isMember = owner->link.hasZone() && ! owner->link.isZoneSender();
+
+        ImGui::BeginDisabled (isMember);
+
         bool waves = owner->link.getWavesEnabled();
 
         if (ImGui::Checkbox ("Screensaver", &waves))
@@ -2172,13 +2181,17 @@ private:
         }
 
         ImGui::SameLine();
-        ImGui::TextDisabled (owner->link.wavesRunning() ? "running" : "idle");
+
+        if (isMember)
+            ImGui::TextDisabled ("not active as a member instance");
+        else
+            ImGui::TextDisabled (owner->link.wavesRunning() ? "running" : "idle");
 
         int mode = owner->link.getWavesMode();
         ImGui::SetNextItemWidth (150.0f);
 
         if (ImGui::Combo ("Pattern", &mode,
-                              "Waves\0Aurora\0Breathing\0Ember\0Gradient drift\0Rainfall\0"))
+                              "Waves\0Aurora\0Breathing\0Ember\0Gradient drift\0Rainfall\0Diffusion\0"))
         {
             owner->link.setWavesMode (mode);
             markDirty();
@@ -2198,9 +2211,12 @@ private:
         /* Three kinds now, and which one you picked is the thing worth saying. */
         ImGui::TextDisabled (mode == 2 || mode == 3
                                  ? "dims your colours - keyswitches stay readable"
-                                 : (mode == 4 || mode == 5
+                                 : (mode >= 4
                                         ? "uses your gradient, not the painted map"
                                         : "replaces your colours until a note is played"));
+
+        ImGui::EndDisabled();
+
     }
 
     void drawMotionControls()
@@ -2283,10 +2299,40 @@ private:
             markDirty();
         }
 
+        /*
+            The beat is the sender's, like the screensaver.
+
+            A bar is a property of the music, so the pulse covers the whole chain and
+            one instance has to own it. Leaving the switch live on a member means a
+            checkbox that changes nothing.
+        */
+        const bool pulseIsMine = ! owner->link.hasZone() || owner->link.isZoneSender();
+
+        ImGui::BeginDisabled (! pulseIsMine);
+
         drawEffectRow ("Beat pulse", owner->link.getPulseEnabled(),
                        owner->link.getPulseColour(), kFxPulse);
+
+        /* The second swatch is the first beat of the bar. Beside the first, because the
+           pair is the point - one colour on its own says nothing about which beat it
+           is. */
         ImGui::SameLine();
-        ImGui::TextDisabled ("follows host transport");
+        uint32_t downbeat = 0;
+
+        if (drawSwatch ("downbeat", owner->link.getDownbeatColour(), downbeat))
+        {
+            owner->link.setDownbeatColour (downbeat);
+            markDirty();
+        }
+
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip ("The first beat of the bar");
+
+        ImGui::SameLine();
+        ImGui::TextDisabled (pulseIsMine ? "bar start, then the rest"
+                                         : "the sending instance pulses the chain");
+
+        ImGui::EndDisabled();
 
         drawEffectRow ("Chord halo", owner->link.getHaloEnabled(),
                        owner->link.getHaloColour(), kFxHalo);
