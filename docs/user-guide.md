@@ -10,7 +10,7 @@ are in the [main README](../README.md).
 | Control | Purpose |
 |---|---|
 | Port | Select the keyboard's MIDI output. `Auto` chooses the first port whose name resembles a ROLI device; choose explicitly when using multiple devices. |
-| Hold | Keep the keyboard assigned to this instance. See [Several instances](#several-instances). |
+| Hold | Keep the keyboard assigned to this instance. See [Several instances]. |
 | Key width | Changes the width of the on-screen keys only. |
 | Range | Changes the displayed note range. The green bracket marks the range shown by the hardware. |
 
