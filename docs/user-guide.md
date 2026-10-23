@@ -164,7 +164,7 @@ currently displayed map, so switching tracks updates only notes whose colours di
 
 Use **Hold** to pin the device to one instance. Hold and Share cannot be enabled together.
 
-## Sharing a chained keyboard across tracks in one DAW project
+## Sharing a LUMI / Piano M keyboard across tracks in one DAW project
 
 Enable **Share** in each instance to assign it a note range. Automatically, one instance of LumiPaint becomes the "master".
 Other instances become "members". Each instance owns a non-overlapping note range.
@@ -187,9 +187,9 @@ Notes are filtered within each track by zone allowing to play multiple tracks (t
 - Enable input monitoring on every track that should receive MIDI. A plugin cannot arm a
   DAW track itself.
 
-## Chained blocks: linked or independent octaves
+## Multiple LUMI / Piano Ms can linked or independent octaves
 
-Physically connected blocks form a cluster and report their positions to the device program.
+Physically connected LUMI / Piano Ms form a cluster and report their positions to Lumipaint.
 At the same octave setting, two 24-key blocks sit end to end.
 
 - **Linked:** pressing an octave button on either block moves all blocks together.
