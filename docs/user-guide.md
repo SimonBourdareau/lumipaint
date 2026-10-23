@@ -14,6 +14,8 @@ are in the [main README](../README.md).
 | Key width | Changes the width of the on-screen keys only. |
 | Range | Changes the displayed note range. The green bracket marks the range shown by the hardware. |
 
+### Piano M preview 
+
 The keyboard preview shows the composited output, including animations. Keys outside the
 hardware's range are dimmed.
 
@@ -33,7 +35,7 @@ or **All octaves** to select every octave of its pitch class.
 | Save / Load | Save or load the map, effect colours, and related settings. |
 | Copy / Paste | Copy the map and settings between LumiPaint instances on the same machine. |
 
-Keyboard gestures:
+Keyboard selection controls:
 
 - **Click:** select a key; with **All octaves**, select its pitch class across octaves.
 - **Shift-click:** extend the selection from the last clicked key.
@@ -41,19 +43,13 @@ Keyboard gestures:
 - **Ctrl-A** (Cmd-A on macOS): select all 128 notes.
 - **Alt-drag:** paint continuously with the current picker colour.
 
-### Undo
-
-The arrows in the top-right corner provide up to 30 undo steps for colour-map changes:
-painting, generators, gradients, captures, map loading and pasting. Effect settings and
-output levels are not included.
-
 ### Gradients and map generators
 
-A gradient has two to eight colour stops. Select notes and press **Paint n** to distribute
+A **gradient** has two to eight colour stops. Select notes and press **Paint n** to distribute
 the gradient evenly across the selection order, not across the MIDI note-number span. This
-also works for scattered selections, such as every C. **Reverse** flips the stop order.
+also works for scattered selections, such as every C. **Reverse** flips the order.
 
-Map generators overwrite the entire 128-note table:
+**Map generators** overwrite the entire 128-note table:
 
 | Mode | Result |
 |---|---|
@@ -61,6 +57,7 @@ Map generators overwrite the entire 128-note table:
 | Fifths | Colours notes by position in the circle of fifths. |
 | Piano | White keys white; black keys off. |
 | Blackout | Turns all notes off as a starting point for manual painting. |
+| Scale | Display a given scale with the root. |
 
 The scale controls colour the tonic, in-scale notes and out-of-scale notes. **Select
 in-scale** selects those notes without painting them. The scale also informs Degrees and
@@ -94,30 +91,23 @@ Ripple colour sources are **Fixed**, **Wheel**, **Fifths**, **Degree**, **Map** 
 **Gradient**. Gradient uses the gradient stops rather than the painted map, so it can
 produce coloured waves over Blackout.
 
+### Undo/Redo
+
+The arrows in the top-right corner provide up to 30 undo/redo steps for colour-map changes:
+painting, generators, gradients, captures, map loading and pasting. Effect settings and
+output levels are not included.
+
 ### Screensaver
 
 The screensaver starts after the configured idle delay and stops as soon as activity is
 detected. Held notes, sustain-held notes and notes observed through the listen port count as
 activity.
 
-`Splash` behaves the other way round from ripples when the keyboard is shared: it starts
-from the middle of the instance's own zone and stays inside it. A ripple is about a note, so
-it crosses; a splash is a controller on one track saying something about that part, and
-spreading it over another track's keys would be one instance washing over another's. With
-no zone it is unchanged - the middle of the instrument, spreading across all of it.
-
-`Beat pulse` is also the sending instance's alone. A bar belongs to the music rather than to
-a range, so when it fires it covers every key the chain owns, not just the sender's slice -
-and on a member the row is greyed out and reads *the sending instance pulses the chain*.
-
 On a member of a shared chain the whole Screensaver section is greyed out and reads
-*not active as a member instance*. The instance that is sending draws the idle pattern for
-the whole chain, so a member's own setting would change nothing.
+*not active as a member instance*.
 
 In a shared chain, idleness belongs to the keyboard rather than to one track: a note held in
-any zone keeps the whole chain awake. Without that, a member being played would reset only
-its own clock and whichever instance was sending would lay the pattern over notes somebody
-was still holding.
+any zone keeps the whole chain awake.
 
 | Pattern | Purpose |
 |---|---|
@@ -125,9 +115,9 @@ was still holding.
 | Aurora | A moving band of green, teal, blue and violet hues. |
 | Breathing | Pulses the brightness of the existing map without replacing it. |
 | Ember | Like Breathing, but each note has a different phase. |
-| Gradient drift | Scrolls the configured gradient across the keys. |
-| Rainfall | Coloured drops spread and fade across the keyboard. |
-| Diffusion | Paint dropped onto a wet canvas. A drop covers the keys it lands on rather than adding to them, so the colour stays until something else is dropped over it, and a slow flow drags the whole surface past itself - stretching colour thin where it pulls apart, piling it up where it meets. Nothing drains away; the surface only changes because new paint lands and the flow keeps moving it. Takes its colours from the gradient. |
+| Gradient drift | Scrolls the configured gradient across the keys. Takes its colours from the gradient. |
+| Rainfall | Coloured drops spread and fade across the keyboard. Takes its colours from the gradient. |
+| Diffusion | Paint dropped onto a wet canvas. Takes its colours from the gradient. |
 
 Waves, Aurora, Gradient drift and Rainfall temporarily replace the colour table until a note
 is played. Breathing and Ember preserve the map and animate its brightness.
@@ -140,15 +130,14 @@ DecentSampler, SINE Player and Chromaphone.
 1. Choose **Find windows**.
 2. Select a window and press **Read keyboard**.
 3. Use **Find anchor** to identify the leftmost C. LumiPaint plays MIDI note 60 and watches
-   which key changes; the target plugin must display played notes.
+   which key changes in plugin window; the target plugin must display played notes.
 4. Set **Lowest C is** if necessary.
 5. Press **Import colours**.
 6. Enable **Live** to re-read the keybed about five times per second.
 
-Capture is useful only when the other plugin communicates information through colour. A
-plain piano display has nothing meaningful to copy.
+Capture is useful only when the other plugin communicates information through colour. 
 
-On macOS, screen capture requires Screen Recording permission. Restart the DAW after
+NOTE: On macOS, screen capture requires Screen Recording permission. Restart the DAW after
 granting it. OpenGL- and Direct3D-rendered windows cannot be sampled.
 
 ### Keybed and key mapping
@@ -167,31 +156,22 @@ The Key mapping panel includes:
 
 Note numbering is fixed: MIDI note 0 is C-2, note 60 is C3 and note 127 is G8.
 
-## Several instances
+## Several instances of LumiPaint in one DAW project
 
-By default, the keyboard follows activity: receiving notes or opening an editor lets an
-instance claim the device. The previous owner releases its port. All instances share the
+By default, the keyboard follows activity. The instance of LumiPaint receiving notes or being opened
+claim the device. The previous instance releases its port. All instances share the
 currently displayed map, so switching tracks updates only notes whose colours differ.
 
 Use **Hold** to pin the device to one instance. Hold and Share cannot be enabled together.
 
-## Keyboard focus
+## Sharing a chained keyboard across tracks in one DAW project
 
-The editor takes the keyboard only while a text field is being edited - a colour's hex
-value, a note number - and gives it straight back afterwards, so the DAW keeps its own
-shortcuts the rest of the time.
-
-Without that, keystrokes go to whichever window the host last focused. With a single editor
-open that is always the right one, which is why typing worked with one instance and not with
-two.
-
-## Sharing a chained keyboard across tracks
-
-Enable **Share** in each instance to assign it a note zone. Each zone owns a non-overlapping
-range; notes outside the zone are not passed to the next instrument on that track.
+Enable **Share** in each instance to assign it a note range. Automatically, one instance of LumiPaint becomes the "master".
+Other instances become "members". Each instance owns a non-overlapping note range.
+Notes are filtered within each track by zone allowing to play multiple tracks (that need to be all armed) together.
 
 - Drag along the zone bar with **Alt** to set the range. Conflicts are shown in red and
-  rejected.
+  rejected. Each instance reports the ranges declared by other instances.
 - The semitone offset separates the physical keys under your hands from the MIDI notes
   sent to the track. For example, keys at C4–B4 can trigger notes C2–B2.
 - The octave control is locked while sharing, because changing it would shift the mapping
@@ -201,8 +181,8 @@ range; notes outside the zone are not passed to the next instrument on that trac
 - Each instance resolves its own `Incoming`, `Pressed`, `Pressure` and `Bend` colours, so
   every zone keeps its own; they are part of the colours it publishes - the highlight on a held key, the bend tint and the bend
   path are all computed where the notes arrived.
-- The lowest live zone owner sends the assembled keyboard display. Ripples can cross zone
-  boundaries; most other effects remain within their owning zone.
+- The lowest live zone owner sends the assembled keyboard display.
+- Ripples can cross zone boundaries; most other effects remain within their owning zone.
 - Beat pulse is chain-wide.
 - Enable input monitoring on every track that should receive MIDI. A plugin cannot arm a
   DAW track itself.
