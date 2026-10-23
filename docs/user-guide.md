@@ -187,7 +187,7 @@ Notes are filtered within each track by zone allowing to play multiple tracks (t
 - Enable input monitoring on every track that should receive MIDI. A plugin cannot arm a
   DAW track itself.
 
-## Multiple LUMI / Piano Ms can linked or independent octaves
+## Multiple LUMI / Piano Ms can be linked or having independent octaves
 
 Physically connected LUMI / Piano Ms form a cluster and report their positions to Lumipaint.
 At the same octave setting, two 24-key blocks sit end to end.
