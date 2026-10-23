@@ -150,52 +150,23 @@ Wayland session.
 More build options and platform-specific notes are in the
 [Developer guide](docs/development.md).
 
-## Releases and tests
-
-Tag a version to trigger the release workflow:
-
-```sh
-git tag v1.0.1
-git push origin v1.0.1
-```
-
-CI builds Windows, macOS and Linux packages and creates a **draft** release for review.
-Run the workflow manually from GitHub Actions to test a build without creating a release.
-
-Useful checks:
-
-- macOS installer: `bash tests/macos_installer_test.sh`
-- macOS packaged launcher: `bash tests/macos_launcher_test.sh "/path/to/Install LumiPaint.app"`
-- macOS VST3 checks: `sh tests/run-macos-tests.sh`
-- Linux editor smoke test: see the commands in the [Developer guide](docs/development.md)
-
 ## Important limitations
 
 - Keyboard capture needs roughly **8 pixels per white key**. Smaller captures may be
   misdetected.
 - OpenGL- or Direct3D-rendered plugin windows cannot be sampled and may capture as black.
 - Firmware older than 1.3.0 cannot load the device program.
-- Hardware lighting, complete MIDI routing and screen capture remain unverified on macOS;
-  AU, Intel and universal macOS builds are also unverified. Linux is not yet tested.
+- Hardware lighting, complete MIDI routing and screen capture remain partially unverified on macOS;
+  Linux is not yet tested.
 - On Windows, direct MIDI-port sharing depends on Windows MIDI Services. On older setups,
   LumiPaint listens through the host, which requires the track to be armed.
 
 See [Known limitations and hardware testing](docs/development.md#known-limitations-and-hardware-testing)
 for the details.
 
-## Repository layout
-
-```text
-src/                  Cross-platform plugin and editor
-src/platform/         Windows, macOS and X11 host implementations
-cmake/                Build configuration and macOS support
-packaging/macos/      macOS installer and packaging script
-device/               Littlefoot program for the keyboard
-tests/                Installer, plugin and smoke tests
-```
-
 ## Licence and credits
 
 LumiPaint is free software under the **GNU GPL v3 or later**. See the licence text in
-the repository for the full terms. The device protocol builds on the reverse engineering
-in [benob/LUMI-lights](https://github.com/benob/LUMI-lights) and ROLI's Littlefoot API.
+the repository for the full terms.
+
+The device protocol builds on the reverse engineering in [benob/LUMI-lights](https://github.com/benob/LUMI-lights) and ROLI's Littlefoot API.
