@@ -11,7 +11,7 @@ are in the [main README](../README.md).
 |---|---|
 | Port | Select the keyboard's MIDI output. `Auto` chooses the first port whose name resembles a ROLI device; choose explicitly when using multiple devices. |
 | Hold | Keep the keyboard assigned to this instance. See [Several instances](#several-instances-of-lumipaint-in-one-daw-project). |
-| Share | Each instance owns a non-overlapping note range. See [Sharing instances](#sharing-a-lumi--piano-m-keyboard-across-tracks-in-one-daw-project). |
+| Share | Each instance owns a non-overlapping note range. See [Several instances](#sharing-a-lumi--piano-m-keyboard-across-tracks-in-one-daw-project). |
 | Key width | Changes the width of the on-screen keys only. |
 | Range | Changes the displayed note range. The green bracket marks the range shown by the hardware. |
 
